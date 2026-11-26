@@ -17,17 +17,17 @@
 Vaayu decouples a lightweight, self-contained PyTorch inference engine from a browser-computed React visual analytics dashboard.
 
 ```mermaid
-graph LR
-    A[Scenario JSON] -->|Import| B(React Dashboard)
-    B -->|POST /simulate| C{FastAPI serve.py}
-    C -->|init_states & shock| D[MonsoonNet 125k]
-    D -->|10-day Tensor| C
-    C -->|Rollout Payload| B
-    B -->|Browser Compute| E[Impact Panel & Difference Map]
+flowchart LR
+    S1["Scenario JSON"] -->|Import| UI("React Dashboard")
+    UI -->|POST /simulate| API{"FastAPI serve.py"}
+    API -->|init_states + shock| NET["MonsoonNet 125k"]
+    NET -->|10-day Tensor| API
+    API -->|Rollout Payload| UI
+    UI -->|Browser Compute| IMP["Impact Panel and Difference Map"]
 
-    style B fill:#20232A,stroke:#61DAFB,stroke-width:2px,color:#fff
-    style C fill:#005571,stroke:#fff,stroke-width:2px,color:#fff
-    style D fill:#EE4C2C,stroke:#fff,stroke-width:2px,color:#fff
+    style UI fill:#20232A,stroke:#61DAFB,stroke-width:2px,color:#ffffff
+    style API fill:#005571,stroke:#ffffff,stroke-width:2px,color:#ffffff
+    style NET fill:#EE4C2C,stroke:#ffffff,stroke-width:2px,color:#ffffff
 ```
 
 ---
@@ -38,22 +38,22 @@ Standard Vision Transformers (ViTs) and U-Nets rely on global attention or deep 
 
 ```mermaid
 flowchart TD
-    In["3-Day Input (22 Planes: 18 Dynamic + 2 Static + 2 DOY)"] --> Norm["Channel Z-Score Normalization (log1p tp)"]
-    Norm --> Stem["1x1 Convolutional Stem"]
-    Stem --> Res1["3x3 ResBlock (Reflect Pad)"]
-    Res1 --> Res2["3x3 ResBlock (Reflect Pad)"]
-    Res2 --> Res3["3x3 ResBlock (Reflect Pad)"]
-    Res3 --> Head["1x1 Convolutional Head"]
-    Head --> Delta["Delta (Δ) Prediction"]
-    Delta --> Add{"+"}
-    In --> Add
-    Add --> Out["Output State (t+1)"]
+    N0["3-Day Input (22 Planes - 18 Dynamic, 2 Static, 2 DOY)"] --> N1["Channel Z-Score Normalization (log1p tp)"]
+    N1 --> N2["1x1 Convolutional Stem"]
+    N2 --> R1["3x3 ResBlock (Reflect Pad)"]
+    R1 --> R2["3x3 ResBlock (Reflect Pad)"]
+    R2 --> R3["3x3 ResBlock (Reflect Pad)"]
+    R3 --> HD["1x1 Convolutional Head"]
+    HD --> DL["Delta Prediction"]
+    DL --> ADD{"Residual Add"}
+    N0 --> ADD
+    ADD --> OUT["Output State (t+1)"]
 
-    style In fill:#2b2d42,stroke:#edf2f4,color:#fff
-    style Out fill:#d90429,stroke:#edf2f4,color:#fff
-    style Res1 fill:#8d99ae,color:#fff
-    style Res2 fill:#8d99ae,color:#fff
-    style Res3 fill:#8d99ae,color:#fff
+    style N0 fill:#2b2d42,stroke:#edf2f4,color:#ffffff
+    style OUT fill:#d90429,stroke:#edf2f4,color:#ffffff
+    style R1 fill:#8d99ae,color:#ffffff
+    style R2 fill:#8d99ae,color:#ffffff
+    style R3 fill:#8d99ae,color:#ffffff
 ```
 
 - **Strict 3-Cell Receptive Field:** By stacking **exactly three `3×3` reflect-padded residual convolutions** without pooling, striding, dilation, or global operations, any single-cell perturbation is mathematically bounded to a 3-cell radius per autoregressive step, preserving fluid-dynamic locality before propagating outward over multi-day rollouts.
