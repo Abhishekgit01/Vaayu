@@ -14,7 +14,22 @@ import {
   type PaletteKind,
 } from './colormaps'
 import { DISPLAY_CHANNELS, extractDisplayGrid } from './constants'
-import type { ShockConfig } from './shock'
+import {
+  computeSpatialWeights,
+  extractIsoContourSegments,
+  type ShockConfig,
+} from './shock'
+import {
+  DAY1_LOCALITY_CELLS,
+  FRONT_THRESHOLD_FRACTION,
+  REFERENCE_FRONT_CELLS_PER_DAY,
+} from './spread'
+import {
+  computeRelativeVorticityGrid,
+  VORTICITY_META,
+  type ViewFieldId,
+} from './vorticity'
+import { buildDiffWindArrows } from './windFlow'
 
 /** 5-degree latitude parallels inside [6°N, 38°N] */
 export const GRATICULE_LATS = [35, 30, 25, 20, 15, 10] as const
@@ -51,14 +66,21 @@ export interface ChannelRolloutSeries {
   diffScale: ColorScale
   stepMaxAbsDiff: number[]
   rolloutMaxAbsDiff: number
+  /** Per-step isoline contour of |Branch - Prime| at 5% of rolloutMaxAbsDiff */
+  frontContoursByStep: ContourSegment[][]
 }
 
 export interface PrecomputedRolloutWorkspace {
-  byChannel: Record<DisplayChannelId, ChannelRolloutSeries>
+  byChannel: Record<ViewFieldId, ChannelRolloutSeries>
   primeWindArrows: WindArrow[][]
   branchWindArrows: WindArrow[][]
+  diffWindArrows: WindArrow[][]
   primeTpSegments: ContourSegment[][]
   branchTpSegments: ContourSegment[][]
+  /** Thin dashed 3-cell Day-1 locality ring around shockMask */
+  localityRingSegments: ContourSegment[]
+  /** Per-step thin dashed 8 cells/day reference rings (day 1..N) around shockMask */
+  refRingsByStep: ContourSegment[][]
 }
 
 export function buildTpOutlineSegments(
@@ -129,29 +151,135 @@ export function buildWindArrows(state: State3D): WindArrow[] {
   return arrows
 }
 
+const CONTOUR_NX = GRID_COLS * 2
+const CONTOUR_NY = GRID_ROWS * 2
+
+/**
+ * Convert a [32][36] cell-centered scalar grid (row 0 = south) into a bilinearly
+ * sampled north-up vertex grid [ny + 1][nx + 1] over [0..36] x [0..32].
+ */
+export function buildNorthUpScalarVertexField(
+  cellGrid: Grid2D,
+  nx = CONTOUR_NX,
+  ny = CONTOUR_NY,
+  absValue = false,
+): number[][] {
+  const field: number[][] = new Array(ny + 1)
+  for (let iy = 0; iy <= ny; iy++) {
+    const gy = (iy / ny) * GRID_ROWS
+    const gr = Math.max(0, Math.min(GRID_ROWS - 1, GRID_ROWS - 1 - (gy - 0.5)))
+    const r0 = Math.floor(gr)
+    const r1 = Math.min(GRID_ROWS - 1, r0 + 1)
+    const fr = gr - r0
+    const row0 = cellGrid[r0]
+    const row1 = cellGrid[r1]
+    const outRow = new Array<number>(nx + 1)
+
+    for (let ix = 0; ix <= nx; ix++) {
+      const gx = (ix / nx) * GRID_COLS
+      const gc = Math.max(0, Math.min(GRID_COLS - 1, gx - 0.5))
+      const c0 = Math.floor(gc)
+      const c1 = Math.min(GRID_COLS - 1, c0 + 1)
+      const fc = gc - c0
+
+      const a00 = absValue ? Math.abs(row0[c0]) : row0[c0]
+      const a01 = absValue ? Math.abs(row0[c1]) : row0[c1]
+      const a10 = absValue ? Math.abs(row1[c0]) : row1[c0]
+      const a11 = absValue ? Math.abs(row1[c1]) : row1[c1]
+
+      const v0 = a00 + (a01 - a00) * fc
+      const v1 = a10 + (a11 - a10) * fc
+      outRow[ix] = v0 + (v1 - v0) * fr
+    }
+    field[iy] = outRow
+  }
+  return field
+}
+
+function buildDistanceVertexFieldFromMask(
+  shockMask?: boolean[][],
+  nx = CONTOUR_NX,
+  ny = CONTOUR_NY,
+): number[][] | null {
+  if (!shockMask) return null
+  const shockCells: Array<[number, number]> = []
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < GRID_COLS; c++) {
+      if (shockMask[r]?.[c]) {
+        shockCells.push([r, c])
+      }
+    }
+  }
+  if (shockCells.length === 0) return null
+
+  const field: number[][] = new Array(ny + 1)
+  for (let iy = 0; iy <= ny; iy++) {
+    const gy = (iy / ny) * GRID_ROWS
+    const rowCoord = GRID_ROWS - 1 - (gy - 0.5)
+    const outRow = new Array<number>(nx + 1)
+    for (let ix = 0; ix <= nx; ix++) {
+      const gx = (ix / nx) * GRID_COLS
+      const colCoord = gx - 0.5
+      let minSq = Infinity
+      for (let i = 0; i < shockCells.length; i++) {
+        const dr = rowCoord - shockCells[i][0]
+        const dc = colCoord - shockCells[i][1]
+        const sq = dr * dr + dc * dc
+        if (sq < minSq) minSq = sq
+      }
+      outRow[ix] = Math.sqrt(minSq)
+    }
+    field[iy] = outRow
+  }
+  return field
+}
+
 /**
  * Precompute all channel display grids, difference grids, rollout-consistent color scales,
- * wind vectors, and tp > 10 mm/day contours ONCE when primeRollout or branchRollout changes.
+ * 5%-of-peak |Branch - Prime| response front contours, 3-cell locality ring, and 8 cells/day
+ * reference rings ONCE when rollouts or applied shock mask change.
  */
 export function precomputeRolloutWorkspace(
   primeRollout: StateSequence | null,
   branchRollout: StateSequence | null,
+  shockMask?: boolean[][],
 ): PrecomputedRolloutWorkspace {
   const primeLen = primeRollout?.length ?? 0
   const branchLen = branchRollout?.length ?? 0
   const diffLen = Math.min(primeLen, branchLen)
+  const maxSteps = Math.max(primeLen, branchLen)
 
-  const byChannel = {} as Record<DisplayChannelId, ChannelRolloutSeries>
+  const byChannel = {} as Record<ViewFieldId, ChannelRolloutSeries>
 
-  for (const ch of DISPLAY_CHANNELS) {
+  const allFields: Array<{
+    id: ViewFieldId
+    divergingBase: boolean
+    clampZero: boolean
+    extract: (state: State3D) => Grid2D
+  }> = [
+    ...DISPLAY_CHANNELS.map((ch) => ({
+      id: ch.id as ViewFieldId,
+      divergingBase: Boolean(ch.divergingBase),
+      clampZero: ch.id === 'tp' || ch.id === 'wind' || ch.id === 'tcwv',
+      extract: (state: State3D) => extractDisplayGrid(state, ch.id),
+    })),
+    {
+      id: 'vorticity',
+      divergingBase: VORTICITY_META.divergingBase,
+      clampZero: false,
+      extract: (state: State3D) => computeRelativeVorticityGrid(state),
+    },
+  ]
+
+  for (const field of allFields) {
     const primeGrids: Grid2D[] = new Array(primeLen)
     for (let k = 0; k < primeLen; k++) {
-      primeGrids[k] = extractDisplayGrid(primeRollout![k], ch.id)
+      primeGrids[k] = field.extract(primeRollout![k])
     }
 
     const branchGrids: Grid2D[] = new Array(branchLen)
     for (let k = 0; k < branchLen; k++) {
-      branchGrids[k] = extractDisplayGrid(branchRollout![k], ch.id)
+      branchGrids[k] = field.extract(branchRollout![k])
     }
 
     const diffGrids: Grid2D[] = new Array(diffLen)
@@ -178,15 +306,35 @@ export function precomputeRolloutWorkspace(
       if (stepMax > rolloutMaxAbsDiff) rolloutMaxAbsDiff = stepMax
     }
 
-    const clampZero = ch.id === 'tp' || ch.id === 'wind' || ch.id === 'tcwv'
     const combinedGrids = [...primeGrids, ...branchGrids]
-    const sharedScale = computeScale(combinedGrids, Boolean(ch.divergingBase), clampZero)
+    const sharedScale = computeScale(combinedGrids, field.divergingBase, field.clampZero)
     const diffScale =
       diffGrids.length > 0
         ? computeScale(diffGrids, true)
         : { min: -1, max: 1, diverging: true }
 
-    byChannel[ch.id] = {
+    const frontContoursByStep: ContourSegment[][] = new Array(diffLen)
+    const frontThreshold = rolloutMaxAbsDiff * FRONT_THRESHOLD_FRACTION
+    for (let k = 0; k < diffLen; k++) {
+      if (frontThreshold <= 0 || stepMaxAbsDiff[k] < frontThreshold) {
+        frontContoursByStep[k] = []
+      } else {
+        const magVertexField = buildNorthUpScalarVertexField(
+          diffGrids[k],
+          CONTOUR_NX,
+          CONTOUR_NY,
+          true,
+        )
+        frontContoursByStep[k] = extractIsoContourSegments(
+          magVertexField,
+          CONTOUR_NX,
+          CONTOUR_NY,
+          frontThreshold,
+        )
+      }
+    }
+
+    byChannel[field.id] = {
       primeGrids,
       branchGrids,
       diffGrids,
@@ -194,32 +342,70 @@ export function precomputeRolloutWorkspace(
       diffScale,
       stepMaxAbsDiff,
       rolloutMaxAbsDiff,
+      frontContoursByStep,
     }
   }
 
   const primeWindArrows = primeRollout ? primeRollout.map((s) => buildWindArrows(s)) : []
   const branchWindArrows = branchRollout ? branchRollout.map((s) => buildWindArrows(s)) : []
+  const diffWindArrows: WindArrow[][] = new Array(diffLen)
+  for (let k = 0; k < diffLen; k++) {
+    diffWindArrows[k] = buildDiffWindArrows(primeRollout![k], branchRollout![k])
+  }
   const primeTpSegments = primeRollout ? primeRollout.map((s) => buildTpOutlineSegments(s, 10)) : []
   const branchTpSegments = branchRollout
     ? branchRollout.map((s) => buildTpOutlineSegments(s, 10))
     : []
 
+  const distField = buildDistanceVertexFieldFromMask(shockMask)
+  const localityRingSegments = distField
+    ? extractIsoContourSegments(distField, CONTOUR_NX, CONTOUR_NY, DAY1_LOCALITY_CELLS)
+    : []
+  const refRingsByStep: ContourSegment[][] = new Array(maxSteps)
+  for (let k = 0; k < maxSteps; k++) {
+    if (!distField) {
+      refRingsByStep[k] = []
+    } else {
+      const refDist = (k + 1) * REFERENCE_FRONT_CELLS_PER_DAY
+      refRingsByStep[k] = extractIsoContourSegments(distField, CONTOUR_NX, CONTOUR_NY, refDist)
+    }
+  }
+
   return {
     byChannel,
     primeWindArrows,
     branchWindArrows,
+    diffWindArrows,
     primeTpSegments,
     branchTpSegments,
+    localityRingSegments,
+    refRingsByStep,
   }
 }
 
 const SMOOTH_UPSCALE = 8
+const SEA_DARKEN_STRENGTH = 0.24
+
+function applySeaTint(
+  data: Uint8ClampedArray,
+  rgbaOffset: number,
+  landFraction: number,
+): void {
+  const sea = (1 - Math.max(0, Math.min(1, landFraction))) * SEA_DARKEN_STRENGTH
+  if (sea <= 0) return
+  const keep = 1 - sea
+  // Blend sea pixels subtly toward #0D1210 (13, 18, 16)
+  data[rgbaOffset] = Math.round(data[rgbaOffset] * keep + 13 * sea)
+  data[rgbaOffset + 1] = Math.round(data[rgbaOffset + 1] * keep + 18 * sea)
+  data[rgbaOffset + 2] = Math.round(data[rgbaOffset + 2] * keep + 16 * sea)
+}
 
 /**
  * Render a 32x36 north-up heatmap into an offscreen buffer canvas.
  * - When smooth === false: crisp 36x32 cell grid (row 0 = south at bottom, row 31 = north at top).
  * - When smooth === true: scalar-space bilinear interpolation at 8x sub-cell resolution prior to
  *   palette lookup so gradients and zero-crossings remain physically faithful.
+ * - When landSeaMask is present: sea cells (mask < 1) are tinted subtly darker.
  */
 export function renderHeatmapToBuffer(
   bufferCanvas: HTMLCanvasElement,
@@ -227,6 +413,7 @@ export function renderHeatmapToBuffer(
   scale: ColorScale,
   palette: PaletteKind,
   smooth: boolean,
+  landSeaMask?: Grid2D | null,
 ): void {
   const targetW = smooth ? GRID_COLS * SMOOTH_UPSCALE : GRID_COLS
   const targetH = smooth ? GRID_ROWS * SMOOTH_UPSCALE : GRID_ROWS
@@ -246,9 +433,14 @@ export function renderHeatmapToBuffer(
     for (let r = 0; r < GRID_ROWS; r++) {
       const vy = GRID_ROWS - 1 - r
       const rowData = grid[r]
+      const maskRow = landSeaMask ? landSeaMask[r] : null
       for (let c = 0; c < GRID_COLS; c++) {
         const t = normalizeToScale(rowData[c], scale)
-        writePaletteColor(palette, t, data, (vy * GRID_COLS + c) * 4)
+        const off = (vy * GRID_COLS + c) * 4
+        writePaletteColor(palette, t, data, off)
+        if (maskRow) {
+          applySeaTint(data, off, maskRow[c])
+        }
       }
     }
     ctx.putImageData(img, 0, 0)
@@ -275,6 +467,8 @@ export function renderHeatmapToBuffer(
     const fr = gr - r0
     const row0 = grid[r0]
     const row1 = grid[r1]
+    const mRow0 = landSeaMask ? landSeaMask[r0] : null
+    const mRow1 = landSeaMask ? landSeaMask[r1] : null
     const rowOffset = py * targetW * 4
 
     for (let px = 0; px < targetW; px++) {
@@ -285,7 +479,13 @@ export function renderHeatmapToBuffer(
       const v1 = row1[c0] + (row1[c1] - row1[c0]) * fc
       const val = v0 + (v1 - v0) * fr
       const t = normalizeToScale(val, scale)
-      writePaletteColor(palette, t, data, rowOffset + px * 4)
+      const off = rowOffset + px * 4
+      writePaletteColor(palette, t, data, off)
+      if (mRow0 && mRow1) {
+        const m0 = mRow0[c0] + (mRow0[c1] - mRow0[c0]) * fc
+        const m1 = mRow1[c0] + (mRow1[c1] - mRow1[c0]) * fc
+        applySeaTint(data, off, m0 + (m1 - m0) * fr)
+      }
     }
   }
 
@@ -296,10 +496,17 @@ export interface CanvasOverlayOptions {
   width: number
   height: number
   dpr: number
+  isLightBackground?: boolean
+  coastlineSegments?: ContourSegment[]
   tpSegments?: ContourSegment[]
   windArrows?: WindArrow[]
+  diffWindArrows?: WindArrow[]
   shockConfig?: ShockConfig | null
   showShockOverlay?: boolean
+  frontContourSegments?: ContourSegment[]
+  localityRingSegments?: ContourSegment[]
+  refRingSegments?: ContourSegment[]
+  stepDayNumber?: number
   hoveredCell?: { row: number; col: number } | null
   drawGraticule?: boolean
   drawNorthBadge?: boolean
@@ -363,9 +570,63 @@ export function drawFieldVectorsAndContours(
   }
 }
 
+function strokeSegments(
+  ctx: CanvasRenderingContext2D,
+  segments: ContourSegment[],
+  toX: (gx: number) => number,
+  toY: (gy: number) => number,
+): [number, number] | null {
+  let anchor: [number, number] | null = null
+  ctx.beginPath()
+  for (let i = 0; i < segments.length; i++) {
+    const [x1, y1, x2, y2] = segments[i]
+    const px1 = toX(x1)
+    const py1 = toY(y1)
+    const px2 = toX(x2)
+    const py2 = toY(y2)
+    ctx.moveTo(px1, py1)
+    ctx.lineTo(px2, py2)
+    if (!anchor || py1 < anchor[1]) {
+      anchor = [(px1 + px2) / 2, (py1 + py2) / 2]
+    }
+  }
+  ctx.stroke()
+  return anchor
+}
+
+function drawInlineTag(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  dpr: number,
+  textColor: string,
+): void {
+  ctx.save()
+  ctx.font = `400 ${Math.round(9.5 * dpr)}px 'Geist Mono', ui-monospace, monospace`
+  const tw = ctx.measureText(text).width
+  const padX = 4 * dpr
+  const bw = tw + padX * 2
+  const bh = 14 * dpr
+  const bx = Math.max(3 * dpr, Math.min(width - bw - 3 * dpr, x - bw / 2))
+  const by = Math.max(3 * dpr, Math.min(height - bh - 3 * dpr, y - bh / 2))
+  ctx.fillStyle = 'rgba(13, 18, 16, 0.86)'
+  ctx.strokeStyle = '#26312B'
+  ctx.lineWidth = 1 * dpr
+  ctx.fillRect(bx, by, bw, bh)
+  ctx.strokeRect(bx, by, bw, bh)
+  ctx.fillStyle = textColor
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, bx + bw / 2, by + bh / 2 + 0.5 * dpr)
+  ctx.restore()
+}
+
 /**
  * Draw lat/lon 5-degree graticule lines (no geographic outlines), shock region,
- * north-up indicator, and hover reticle onto a high-DPI canvas.
+ * response front contour, 3-cell locality ring, 8 cells/day reference ring, and hover reticle.
  */
 export function drawCanvasMapOverlays(
   ctx: CanvasRenderingContext2D,
@@ -375,10 +636,17 @@ export function drawCanvasMapOverlays(
     width,
     height,
     dpr,
+    isLightBackground = false,
+    coastlineSegments,
     tpSegments,
     windArrows,
+    diffWindArrows,
     shockConfig,
     showShockOverlay = false,
+    frontContourSegments,
+    localityRingSegments,
+    refRingSegments,
+    stepDayNumber,
     hoveredCell,
     drawGraticule = true,
   } = opts
@@ -428,10 +696,82 @@ export function drawCanvasMapOverlays(
     ctx.restore()
   }
 
+  // 1b. Imported land/sea coastline outline (1px bone #ECE7DA line via marching squares)
+  if (coastlineSegments && coastlineSegments.length > 0) {
+    ctx.save()
+    ctx.lineCap = 'round'
+    ctx.strokeStyle = 'rgba(13, 18, 16, 0.65)'
+    ctx.lineWidth = 2.1 * dpr
+    strokeSegments(ctx, coastlineSegments, toX, toY)
+
+    ctx.strokeStyle = '#ECE7DA'
+    ctx.lineWidth = 1.0 * dpr
+    strokeSegments(ctx, coastlineSegments, toX, toY)
+    ctx.restore()
+  }
+
   // 2. Field contours & wind vectors
   drawFieldVectorsAndContours(ctx, width, height, dpr, tpSegments, windArrows)
 
-  // 3. Shock region footprint
+  // 2b. Difference-mode (Branch − Prime) wind arrows
+  if (diffWindArrows && diffWindArrows.length > 0) {
+    ctx.save()
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    for (let i = 0; i < diffWindArrows.length; i++) {
+      const a = diffWindArrows[i]
+      const x2 = toX(a.x2)
+      const y2 = toY(a.y2)
+      ctx.moveTo(toX(a.x1), toY(a.y1))
+      ctx.lineTo(x2, y2)
+      ctx.moveTo(toX(a.headA[0]), toY(a.headA[1]))
+      ctx.lineTo(x2, y2)
+      ctx.lineTo(toX(a.headB[0]), toY(a.headB[1]))
+    }
+    ctx.strokeStyle = 'rgba(236, 231, 218, 0.75)'
+    ctx.lineWidth = 2.4 * dpr
+    ctx.stroke()
+
+    ctx.strokeStyle = '#141B18'
+    ctx.lineWidth = 1.2 * dpr
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  // 3. Reference dashed rings: 3-cell locality ring & 8 cells/day reference ring
+  if (localityRingSegments && localityRingSegments.length > 0) {
+    ctx.save()
+    ctx.setLineDash([3.5 * dpr, 3.5 * dpr])
+    ctx.strokeStyle = isLightBackground ? 'rgba(13, 18, 16, 0.35)' : 'rgba(13, 18, 16, 0.55)'
+    ctx.lineWidth = 2.2 * dpr
+    strokeSegments(ctx, localityRingSegments, toX, toY)
+
+    ctx.strokeStyle = isLightBackground ? '#2F6F73' : '#7FB5B0'
+    ctx.lineWidth = 1.15 * dpr
+    const locAnchor = strokeSegments(ctx, localityRingSegments, toX, toY)
+    ctx.restore()
+
+    if (locAnchor && width >= 260) {
+      drawInlineTag(ctx, '3c locality', locAnchor[0], locAnchor[1], width, height, dpr, '#7FB5B0')
+    }
+  }
+
+  if (refRingSegments && refRingSegments.length > 0) {
+    ctx.save()
+    ctx.setLineDash([6 * dpr, 4 * dpr])
+    ctx.strokeStyle = isLightBackground ? 'rgba(90, 100, 93, 0.72)' : 'rgba(140, 149, 141, 0.65)'
+    ctx.lineWidth = 1.15 * dpr
+    const refAnchor = strokeSegments(ctx, refRingSegments, toX, toY)
+    ctx.restore()
+
+    if (refAnchor && width >= 260) {
+      const tag = stepDayNumber ? `8c/d (${stepDayNumber * 8}c)` : '8c/d ref'
+      drawInlineTag(ctx, tag, refAnchor[0], refAnchor[1], width, height, dpr, '#8C958D')
+    }
+  }
+
+  // 4. Shock footprint outlined in solid lightning #F0B84B
   if (showShockOverlay && shockConfig) {
     ctx.save()
     if (shockConfig.shape === 'box') {
@@ -445,52 +785,75 @@ export function drawCanvasMapOverlays(
       const w = toX(cMax - cMin + 1)
       const h = toY(rMax - rMin + 1)
 
-      ctx.strokeStyle = 'rgba(13, 18, 16, 0.72)'
-      ctx.lineWidth = 2.4 * dpr
-      ctx.setLineDash([5 * dpr, 3 * dpr])
+      ctx.strokeStyle = 'rgba(13, 18, 16, 0.78)'
+      ctx.lineWidth = 2.8 * dpr
       ctx.strokeRect(x, y, w, h)
 
-      ctx.strokeStyle = '#f0b84b'
-      ctx.lineWidth = 1.3 * dpr
+      ctx.strokeStyle = '#F0B84B'
+      ctx.lineWidth = 1.5 * dpr
       ctx.strokeRect(x, y, w, h)
     } else {
-      const cx = toX(shockConfig.centerCol + 0.5)
-      const cy = toY(GRID_ROWS - 1 - shockConfig.centerRow + 0.5)
-      const cellW = width / GRID_COLS
-      const cellH = height / GRID_ROWS
-      const sigma = shockConfig.gaussianSigma
+      const weights = computeSpatialWeights(shockConfig)
+      const weightField = buildNorthUpScalarVertexField(weights, CONTOUR_NX, CONTOUR_NY, false)
+      const coreSegs = extractIsoContourSegments(
+        weightField,
+        CONTOUR_NX,
+        CONTOUR_NY,
+        Math.exp(-0.5),
+      )
+      const outerSegs = extractIsoContourSegments(weightField, CONTOUR_NX, CONTOUR_NY, 0.08)
 
-      // Outer 2.5-sigma cutoff ellipse
-      ctx.beginPath()
-      ctx.ellipse(cx, cy, sigma * 2.5 * cellW, sigma * 2.5 * cellH, 0, 0, Math.PI * 2)
-      ctx.setLineDash([4 * dpr, 3 * dpr])
-      ctx.strokeStyle = 'rgba(240, 184, 75, 0.62)'
-      ctx.lineWidth = 1.1 * dpr
-      ctx.stroke()
+      if (outerSegs.length > 0) {
+        ctx.save()
+        ctx.setLineDash([4 * dpr, 3 * dpr])
+        ctx.strokeStyle = 'rgba(240, 184, 75, 0.68)'
+        ctx.lineWidth = 1.1 * dpr
+        strokeSegments(ctx, outerSegs, toX, toY)
+        ctx.restore()
+      }
 
-      // Inner 1-sigma ellipse
-      ctx.beginPath()
-      ctx.ellipse(cx, cy, sigma * cellW, sigma * cellH, 0, 0, Math.PI * 2)
-      ctx.setLineDash([])
-      ctx.strokeStyle = '#f0b84b'
-      ctx.lineWidth = 1.35 * dpr
-      ctx.stroke()
+      if (coreSegs.length > 0) {
+        ctx.strokeStyle = 'rgba(13, 18, 16, 0.78)'
+        ctx.lineWidth = 2.8 * dpr
+        strokeSegments(ctx, coreSegs, toX, toY)
 
-      // Center crosshair
-      const arm = 0.65 * Math.min(cellW, cellH)
-      ctx.beginPath()
-      ctx.moveTo(cx - arm, cy)
-      ctx.lineTo(cx + arm, cy)
-      ctx.moveTo(cx, cy - arm)
-      ctx.lineTo(cx, cy + arm)
-      ctx.strokeStyle = '#ece7da'
-      ctx.lineWidth = 1.2 * dpr
-      ctx.stroke()
+        ctx.strokeStyle = '#F0B84B'
+        ctx.lineWidth = 1.5 * dpr
+        strokeSegments(ctx, coreSegs, toX, toY)
+      }
     }
     ctx.restore()
   }
 
-  // 4. Hovered cell reticle
+  // 5. Response front contour: |Branch - Prime| at 5% of rollout peak
+  if (frontContourSegments && frontContourSegments.length > 0) {
+    ctx.save()
+    ctx.lineCap = 'round'
+    ctx.strokeStyle = isLightBackground ? 'rgba(236, 231, 218, 0.78)' : 'rgba(13, 18, 16, 0.8)'
+    ctx.lineWidth = 3.0 * dpr
+    strokeSegments(ctx, frontContourSegments, toX, toY)
+
+    ctx.strokeStyle = isLightBackground ? '#0D1210' : '#ECE7DA'
+    ctx.lineWidth = 1.5 * dpr
+    const frontAnchor = strokeSegments(ctx, frontContourSegments, toX, toY)
+    ctx.restore()
+
+    if (frontAnchor && width >= 260) {
+      const label = stepDayNumber ? `D${stepDayNumber} 5% front` : '5% front'
+      drawInlineTag(
+        ctx,
+        label,
+        frontAnchor[0],
+        frontAnchor[1] - 8 * dpr,
+        width,
+        height,
+        dpr,
+        '#ECE7DA',
+      )
+    }
+  }
+
+  // 6. Hovered cell reticle
   if (hoveredCell) {
     const cellW = width / GRID_COLS
     const cellH = height / GRID_ROWS

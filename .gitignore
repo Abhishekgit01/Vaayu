@@ -11,7 +11,19 @@
 *.pkl
 *.pickle
 *.whl
+*.zip
 monsoon_data/
+
+# Frontend build & dependencies
+dashboard/node_modules/
+dashboard/dist/
+
+# Local planning docs, archives & Archify scratch
+.archify/
+docs/vaayu-architecture.html
+Monsoon Twin — *.md
+Monsoon Twin Technical Brief (1).pdf
+Yugaantar DevForge Tracks.pdf
 
 # Environment & secrets
 .env

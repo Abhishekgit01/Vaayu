@@ -31,14 +31,14 @@ const PALETTE_STOPS: Record<PaletteKind, readonly RGB[]> = {
     [214, 232, 220],
     [255, 255, 255],
   ],
-  // Wind: perceptual sage-lichen ramp (#0D1210 → #ECE7DA)
+  // Wind Speed: sequential Deep Navy (#0C142C) -> Cerulean (#225C88) -> Cyan (#8AD6E2) -> Bright Cyan-White (#F2FCFF)
   wind: [
-    [13, 18, 16],
-    [27, 43, 36],
-    [53, 86, 71],
-    [98, 140, 117],
-    [169, 200, 160],
-    [236, 231, 218],
+    [12, 20, 44],
+    [22, 46, 88],
+    [34, 92, 136],
+    [64, 152, 178],
+    [138, 214, 226],
+    [242, 252, 255],
   ],
   // Pressure (msl): perceptual warm-slate to bone ramp
   pressure: [

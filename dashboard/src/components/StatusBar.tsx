@@ -1,3 +1,5 @@
+import { useRef, type ChangeEvent } from 'react'
+
 export type HealthState =
   | { kind: 'checking' }
   | { kind: 'ready'; modelName: string; lastCheckedAt: number }
@@ -11,6 +13,9 @@ interface StatusBarProps {
   onStepsChange: (steps: number) => void
   hasScenario: boolean
   scenarioLabel?: string
+  geographyLabel?: string | null
+  onImportGeographyFile?: (file: File) => void
+  onClearGeography?: () => void
   isSimulating: boolean
   onRefreshHealth: () => void
   onResetScenario: () => void
@@ -24,10 +29,23 @@ export function StatusBar({
   onStepsChange,
   hasScenario,
   scenarioLabel,
+  geographyLabel,
+  onImportGeographyFile,
+  onClearGeography,
   isSimulating,
   onRefreshHealth,
   onResetScenario,
 }: StatusBarProps) {
+  const geoInputRef = useRef<HTMLInputElement | null>(null)
+
+  const handleGeoFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file && onImportGeographyFile) {
+      onImportGeographyFile(file)
+    }
+    e.target.value = ''
+  }
+
   const handleStepInput = (raw: string) => {
     const parsed = Number.parseInt(raw, 10)
     if (!Number.isNaN(parsed)) {
@@ -77,6 +95,44 @@ export function StatusBar({
 
         {/* Plain-text telemetry right */}
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-xs text-[#8C958D] tabular-nums">
+          {onImportGeographyFile && (
+            <>
+              <input
+                ref={geoInputRef}
+                type="file"
+                accept=".json,application/json"
+                onChange={handleGeoFileChange}
+                className="hidden"
+              />
+              {geographyLabel ? (
+                <span className="inline-flex items-center gap-1.5 font-sans text-xs">
+                  <span className="text-[#8C958D]">Mask:</span>
+                  <span className="max-w-[110px] truncate font-mono text-[#ECE7DA]">
+                    {geographyLabel}
+                  </span>
+                  {onClearGeography && (
+                    <button
+                      type="button"
+                      onClick={onClearGeography}
+                      className="ui-transition text-[#7FB5B0] underline-offset-4 hover:underline cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => geoInputRef.current?.click()}
+                  className="ui-transition font-sans text-xs text-[#7FB5B0] underline-offset-4 hover:underline cursor-pointer"
+                >
+                  Import geography
+                </button>
+              )}
+              <span className="text-[#5A645D]">·</span>
+            </>
+          )}
+
           <button
             type="button"
             onClick={onRefreshHealth}

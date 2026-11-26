@@ -1,7 +1,7 @@
 import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import type { ScenarioData } from '../api/types'
 import { parseAndValidateScenario } from '../lib/validation'
-import { TopographicLatticeBg } from './TopographicLatticeBg'
+import { AsciiRainscapeBg } from './AsciiRainscapeBg'
 
 interface EmptyStateProps {
   steps: number
@@ -24,6 +24,7 @@ export function EmptyState({
   const [validationError, setValidationError] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [isReadingFile, setIsReadingFile] = useState(false)
+  const [bgDestroyed, setBgDestroyed] = useState(false)
 
   const processRawText = (text: string, sourceLabel: string) => {
     const result = parseAndValidateScenario(text, sourceLabel)
@@ -31,6 +32,7 @@ export function EmptyState({
       setValidationError(result.error)
       return
     }
+    setBgDestroyed(true)
     setValidationError(null)
     onImport(result.data)
   }
@@ -63,6 +65,7 @@ export function EmptyState({
     setIsDragging(false)
     const file = e.dataTransfer.files?.[0]
     if (file) {
+      setBgDestroyed(true)
       void handleFile(file)
     }
   }
@@ -79,20 +82,20 @@ export function EmptyState({
       }}
       onDragLeave={() => setIsDragging(false)}
       onDrop={handleDrop}
-      className={`relative flex min-h-[calc(100vh-56px)] w-full flex-1 items-center overflow-hidden bg-[#0D1210] ${
+      className={`relative isolate flex min-h-[calc(100vh-56px)] w-full flex-1 items-center overflow-hidden bg-[#020617] ${
         isDragging ? 'outline-1 -outline-offset-8 outline-dashed outline-[#7FB5B0]' : ''
       }`}
     >
-      {/* Full-bleed decorative Three.js 32x36 topographic lattice */}
-      <TopographicLatticeBg />
+      {/* ASCII cloud & rain canvas (z-index -1, no pointer events, 15 FPS); unmounts the moment import is clicked */}
+      <AsciiRainscapeBg destroyed={bgDestroyed} />
 
-      {/* Subtle vignette keeping the left editorial column crystal clear */}
+      {/* Soft left-side scrim so the editorial copy stays readable over the rain */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            'linear-gradient(90deg, rgba(13, 18, 16, 0.92) 0%, rgba(13, 18, 16, 0.72) 48%, rgba(13, 18, 16, 0.18) 100%)',
+            'linear-gradient(90deg, rgba(2, 6, 23, 0.82) 0%, rgba(2, 6, 23, 0.5) 40%, rgba(2, 6, 23, 0) 66%)',
         }}
       />
 
@@ -119,7 +122,10 @@ export function EmptyState({
             <button
               type="button"
               disabled={isReadingFile}
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => {
+                setBgDestroyed(true)
+                fileInputRef.current?.click()
+              }}
               className="ui-transition rounded-[3px] border border-[#F0B84B] bg-[#F0B84B] px-5 py-2.5 text-sm font-medium text-[#0D1210] hover:bg-[#f4c668] disabled:opacity-50 cursor-pointer"
             >
               {isReadingFile ? 'Reading scenario…' : 'Import scenario file'}
@@ -153,7 +159,10 @@ export function EmptyState({
             {showDevPreview && onLoadSyntheticPreview && (
               <button
                 type="button"
-                onClick={onLoadSyntheticPreview}
+                onClick={() => {
+                  setBgDestroyed(true)
+                  onLoadSyntheticPreview()
+                }}
                 className="ui-transition rounded-[2px] border border-[#D9593D] bg-[#141B18] px-2.5 py-1 font-mono text-xs text-[#D9593D] hover:bg-[#D9593D] hover:text-[#0D1210] cursor-pointer"
               >
                 Load synthetic preview

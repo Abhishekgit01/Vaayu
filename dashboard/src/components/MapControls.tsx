@@ -2,8 +2,10 @@ import { useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { ChevronLeft, ChevronRight, Pause, Play } from 'lucide-react'
 import type { DisplayChannelId } from '../api/types'
 import { DISPLAY_CHANNELS } from '../lib/constants'
+import { VORTICITY_META } from '../lib/vorticity'
 
-export type CompareMode = 'side-by-side' | 'split' | 'difference'
+export type StageMode = 'prime' | 'branch' | 'difference' | 'split'
+export type CompareMode = StageMode
 export type PlaybackSpeed = 0.5 | 1 | 2 | 4
 
 export const PLAYBACK_SPEEDS: readonly PlaybackSpeed[] = [0.5, 1, 2, 4] as const
@@ -68,7 +70,7 @@ export function MapControls({
   return (
     <section
       aria-label="Forecast timeline"
-      className="flex flex-wrap items-center gap-4 border-t border-b border-[#26312B] py-2.5"
+      className="sticky bottom-0 z-20 mt-auto flex flex-wrap items-center gap-4 border-t border-[#26312B] bg-[#0D1210]/95 py-2.5"
     >
       {/* Transport buttons */}
       <div className="flex items-center gap-1">
@@ -211,18 +213,25 @@ export function MapControls({
 interface ChannelSelectorProps {
   channel: DisplayChannelId
   onChannelChange: (ch: DisplayChannelId) => void
+  vorticityActive: boolean
+  onToggleVorticity: () => void
 }
 
 /**
  * Slim right-rail channel selector (tabular instrument rows, 1px hairline rules).
  */
-export function ChannelSelector({ channel, onChannelChange }: ChannelSelectorProps) {
+export function ChannelSelector({
+  channel,
+  onChannelChange,
+  vorticityActive,
+  onToggleVorticity,
+}: ChannelSelectorProps) {
   return (
     <div className="border-b border-[#26312B] pb-5">
       <p className="mb-2.5 text-xs text-[#8C958D]">Displayed channel</p>
       <div className="grid grid-cols-1 border-t border-[#26312B]">
         {DISPLAY_CHANNELS.map((ch) => {
-          const active = ch.id === channel
+          const active = !vorticityActive && ch.id === channel
           return (
             <button
               key={ch.id}
@@ -237,11 +246,33 @@ export function ChannelSelector({ channel, onChannelChange }: ChannelSelectorPro
               <span className="text-xs">
                 <span className="font-mono text-[#ECE7DA]">{ch.shortLabel}</span>
                 <span className="ml-2 text-[#8C958D]">{ch.label}</span>
+                {ch.isComputed && (
+                  <span className="ml-1.5 font-mono text-[10px] text-[#7FB5B0]">computed</span>
+                )}
               </span>
               <span className="font-mono text-[11px] text-[#5A645D]">{ch.displayUnit}</span>
             </button>
           )
         })}
+
+        {/* Derived browser-computed Relative Vorticity layer */}
+        <button
+          type="button"
+          onClick={onToggleVorticity}
+          aria-pressed={vorticityActive}
+          className={`ui-transition flex items-baseline justify-between border-b border-[#26312B] px-2.5 py-1.5 text-left cursor-pointer ${
+            vorticityActive
+              ? 'border-l-2 border-l-[#F0B84B] bg-[#141B18] text-[#ECE7DA]'
+              : 'text-[#8C958D] hover:bg-[#141B18]/60 hover:text-[#ECE7DA]'
+          }`}
+        >
+          <span className="text-xs">
+            <span className="font-mono text-[#ECE7DA]">{VORTICITY_META.shortLabel}</span>
+            <span className="ml-2 text-[#8C958D]">{VORTICITY_META.label}</span>
+            <span className="ml-1.5 font-mono text-[10px] text-[#7FB5B0]">computed</span>
+          </span>
+          <span className="font-mono text-[11px] text-[#5A645D]">{VORTICITY_META.displayUnit}</span>
+        </button>
       </div>
     </div>
   )

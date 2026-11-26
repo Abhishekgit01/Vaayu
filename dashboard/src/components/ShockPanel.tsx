@@ -1,12 +1,10 @@
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { createPortal } from 'react-dom'
 import { RotateCcw } from 'lucide-react'
 import { GRID_COLS, GRID_ROWS, type ChannelKey, type State3D } from '../api/types'
 import { CHANNELS, colToLon, rowToLat } from '../lib/constants'
@@ -16,7 +14,6 @@ import {
   createEmptyShockConfig,
   createWarmBayOfBengalPreset,
   createWeakerArabianSeaWindPreset,
-  extractIsoContourSegments,
   getCachedLastInputDay,
   getGaussianStrokePoints,
   moveShockCenter,
@@ -29,129 +26,23 @@ import {
 interface ShockPanelProps {
   config: ShockConfig
   onChange: (next: ShockConfig) => void
+  onReset?: () => void
   onRun: () => void
   onRunZeroShock: () => void
   isSimulating: boolean
   hasPrime: boolean
 }
 
-function PaintedGaussianMapOverlay({
-  host,
-  weights,
-}: {
-  host: HTMLElement
-  weights: number[][]
-}) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-
-  const contours = useMemo(() => {
-    const nx = GRID_COLS * 2
-    const ny = GRID_ROWS * 2
-    const field: number[][] = Array.from({ length: ny + 1 }, (_, iy) => {
-      const gy = (iy / ny) * GRID_ROWS
-      const gr = Math.max(0, Math.min(GRID_ROWS - 1, GRID_ROWS - 1 - (gy - 0.5)))
-      const r0 = Math.floor(gr)
-      const r1 = Math.min(GRID_ROWS - 1, r0 + 1)
-      const fr = gr - r0
-      return Array.from({ length: nx + 1 }, (__, ix) => {
-        const gx = (ix / nx) * GRID_COLS
-        const gc = Math.max(0, Math.min(GRID_COLS - 1, gx - 0.5))
-        const c0 = Math.floor(gc)
-        const c1 = Math.min(GRID_COLS - 1, c0 + 1)
-        const fc = gc - c0
-        const v0 = weights[r0][c0] + (weights[r0][c1] - weights[r0][c0]) * fc
-        const v1 = weights[r1][c0] + (weights[r1][c1] - weights[r1][c0]) * fc
-        return v0 + (v1 - v0) * fr
-      })
-    })
-    return {
-      core: extractIsoContourSegments(field, nx, ny, Math.exp(-0.5)),
-      outer: extractIsoContourSegments(field, nx, ny, 0.08),
-    }
-  }, [weights])
-
-  const paint = useCallback(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const rect = host.getBoundingClientRect()
-    if (rect.width <= 0 || rect.height <= 0) return
-
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    const w = Math.max(1, Math.round(rect.width * dpr))
-    const h = Math.max(1, Math.round(rect.height * dpr))
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w
-      canvas.height = h
-    }
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.clearRect(0, 0, w, h)
-
-    const toX = (gx: number) => (gx / GRID_COLS) * w
-    const toY = (gy: number) => (gy / GRID_ROWS) * h
-
-    if (contours.outer.length > 0) {
-      ctx.save()
-      ctx.setLineDash([4 * dpr, 3 * dpr])
-      ctx.strokeStyle = 'rgba(240, 184, 75, 0.65)'
-      ctx.lineWidth = 1.2 * dpr
-      ctx.beginPath()
-      for (const [x1, y1, x2, y2] of contours.outer) {
-        ctx.moveTo(toX(x1), toY(y1))
-        ctx.lineTo(toX(x2), toY(y2))
-      }
-      ctx.stroke()
-      ctx.restore()
-    }
-
-    if (contours.core.length > 0) {
-      ctx.save()
-      ctx.strokeStyle = 'rgba(13, 18, 16, 0.72)'
-      ctx.lineWidth = 2.6 * dpr
-      ctx.beginPath()
-      for (const [x1, y1, x2, y2] of contours.core) {
-        ctx.moveTo(toX(x1), toY(y1))
-        ctx.lineTo(toX(x2), toY(y2))
-      }
-      ctx.stroke()
-
-      ctx.strokeStyle = '#F0B84B'
-      ctx.lineWidth = 1.4 * dpr
-      ctx.stroke()
-      ctx.restore()
-    }
-  }, [host, contours])
-
-  useEffect(() => {
-    paint()
-  }, [paint])
-
-  useEffect(() => {
-    const obs = new ResizeObserver(() => paint())
-    obs.observe(host)
-    return () => obs.disconnect()
-  }, [host, paint])
-
-  return createPortal(
-    <canvas
-      ref={canvasRef}
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-0 z-[5] block h-full w-full"
-    />,
-    host,
-  )
-}
-
 export function ShockPanel({
   config,
   onChange,
+  onReset,
   onRun,
   onRunZeroShock,
   isSimulating,
   hasPrime,
 }: ShockPanelProps) {
   const [lastInputDay, setLastInputDay] = useState<State3D | null>(() => getCachedLastInputDay())
-  const [interactiveMapHosts, setInteractiveMapHosts] = useState<HTMLElement[]>([])
 
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const previewBoxRef = useRef<HTMLDivElement | null>(null)
@@ -167,31 +58,6 @@ export function ShockPanel({
   }, [])
 
   const strokePoints = getGaussianStrokePoints(config)
-  const hasPaintedTrail = config.shape === 'gaussian' && strokePoints.length > 1
-
-  useEffect(() => {
-    if (!hasPaintedTrail) {
-      setInteractiveMapHosts((prev) => (prev.length === 0 ? prev : []))
-      return
-    }
-
-    const syncHosts = () => {
-      const nodes = Array.from(
-        document.querySelectorAll<HTMLElement>('div.cursor-crosshair.aspect-\\[36\\/32\\]'),
-      ).filter((el) => el !== previewBoxRef.current && el.querySelector('canvas'))
-      setInteractiveMapHosts((prev) => {
-        if (prev.length === nodes.length && prev.every((el, i) => el === nodes[i])) {
-          return prev
-        }
-        return nodes
-      })
-    }
-
-    syncHosts()
-    const obs = new MutationObserver(syncHosts)
-    obs.observe(document.body, { childList: true, subtree: true })
-    return () => obs.disconnect()
-  }, [hasPaintedTrail])
 
   const preview = useMemo(
     () => computeShockPreview(config, lastInputDay),
@@ -444,11 +310,6 @@ export function ShockPanel({
 
   return (
     <aside className="flex flex-col gap-5">
-      {hasPaintedTrail &&
-        interactiveMapHosts.map((host, idx) => (
-          <PaintedGaussianMapOverlay key={idx} host={host} weights={preview.weights} />
-        ))}
-
       {/* Section header */}
       <div className="flex items-baseline justify-between">
         <div>
@@ -463,7 +324,13 @@ export function ShockPanel({
         </div>
         <button
           type="button"
-          onClick={() => onChange(createEmptyShockConfig())}
+          onClick={() => {
+            if (onReset) {
+              onReset()
+            } else {
+              onChange(createEmptyShockConfig())
+            }
+          }}
           title="Reset perturbation"
           className="ui-transition inline-flex items-center gap-1 text-xs text-[#8C958D] hover:text-[#ECE7DA] cursor-pointer"
         >

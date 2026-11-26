@@ -133,6 +133,7 @@ export interface DisplayChannelMeta {
   wireUnit: string
   decimals: number
   divergingBase?: boolean
+  isComputed?: boolean
 }
 
 export const DISPLAY_CHANNELS: readonly DisplayChannelMeta[] = [
@@ -150,14 +151,6 @@ export const DISPLAY_CHANNELS: readonly DisplayChannelMeta[] = [
     shortLabel: 'tp',
     displayUnit: 'mm/day',
     wireUnit: 'mm/day',
-    decimals: 1,
-  },
-  {
-    id: 'wind',
-    label: '10m Wind Speed',
-    shortLabel: 'wind',
-    displayUnit: 'm/s',
-    wireUnit: 'm/s',
     decimals: 1,
   },
   {
@@ -194,6 +187,15 @@ export const DISPLAY_CHANNELS: readonly DisplayChannelMeta[] = [
     wireUnit: 'kg/m²',
     decimals: 1,
   },
+  {
+    id: 'wind',
+    label: 'Wind Speed',
+    shortLabel: 'wind',
+    displayUnit: 'm/s',
+    wireUnit: 'computed √(u10² + v10²)',
+    decimals: 1,
+    isComputed: true,
+  },
 ] as const
 
 export function getDisplayChannelMeta(id: DisplayChannelId): DisplayChannelMeta {
@@ -202,25 +204,33 @@ export function getDisplayChannelMeta(id: DisplayChannelId): DisplayChannelMeta 
 }
 
 /**
+ * Statically compute 10m Wind Magnitude √(u10² + v10²) for a single [6][32][36] timestep.
+ */
+export function computeWindSpeedGrid(state: State3D): Grid2D {
+  const uGrid = state[2]
+  const vGrid = state[3]
+  const out: Grid2D = new Array(GRID_ROWS)
+  for (let r = 0; r < GRID_ROWS; r++) {
+    const row = new Array<number>(GRID_COLS)
+    for (let c = 0; c < GRID_COLS; c++) {
+      const u = uGrid[r][c]
+      const v = vGrid[r][c]
+      row[c] = Math.sqrt(u ** 2 + v ** 2)
+    }
+    out[r] = row
+  }
+  return out
+}
+
+/**
  * Extract a 32x36 grid in display units for the selected channel from a 3D physical state.
  */
 export function extractDisplayGrid(state: State3D, channel: DisplayChannelId): Grid2D {
-  const out: Grid2D = new Array(GRID_ROWS)
   if (channel === 'wind') {
-    const uGrid = state[2]
-    const vGrid = state[3]
-    for (let r = 0; r < GRID_ROWS; r++) {
-      const row = new Array<number>(GRID_COLS)
-      for (let c = 0; c < GRID_COLS; c++) {
-        const u = uGrid[r][c]
-        const v = vGrid[r][c]
-        row[c] = Math.hypot(u, v)
-      }
-      out[r] = row
-    }
-    return out
+    return computeWindSpeedGrid(state)
   }
 
+  const out: Grid2D = new Array(GRID_ROWS)
   const meta = CHANNEL_BY_KEY[channel]
   const src = state[meta.index]
   for (let r = 0; r < GRID_ROWS; r++) {

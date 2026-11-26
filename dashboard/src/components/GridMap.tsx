@@ -9,12 +9,12 @@ import {
 import {
   GRID_COLS,
   GRID_ROWS,
-  type DisplayChannelId,
   type Grid2D,
   type State3D,
 } from '../api/types'
 import {
   paletteToCssGradient,
+  writePaletteColor,
   type ColorScale,
   type PaletteKind,
 } from '../lib/colormaps'
@@ -22,7 +22,6 @@ import {
   colToLon,
   formatCoordLat,
   formatCoordLon,
-  getDisplayChannelMeta,
   rowToLat,
 } from '../lib/constants'
 import {
@@ -31,15 +30,122 @@ import {
   GRATICULE_LONS,
   latToNormY,
   lonToNormX,
-  renderHeatmapToBuffer,
   type ContourSegment,
   type WindArrow,
 } from '../lib/heatmap'
 import type { ShockConfig } from '../lib/shock'
+import type { ViewFieldId } from '../lib/vorticity'
+import { WindFlowCanvas } from './WindFlowCanvas'
 
 export interface HoveredCell {
   row: number
   col: number
+}
+
+// 10x spatial downscaling: 32x36 -> 320x360 (rows x cols) pre-indexed for 60fps+ bilinear interpolation
+const DOWNSCALE_FACTOR = 10
+const UPSCALED_COLS = GRID_COLS * DOWNSCALE_FACTOR // 360
+const UPSCALED_ROWS = GRID_ROWS * DOWNSCALE_FACTOR // 320
+const SEA_TINT_STRENGTH = 0.24
+
+const BILINEAR_C0 = new Int32Array(UPSCALED_COLS)
+const BILINEAR_C1 = new Int32Array(UPSCALED_COLS)
+const BILINEAR_FC = new Float64Array(UPSCALED_COLS)
+for (let px = 0; px < UPSCALED_COLS; px++) {
+  const gx = Math.max(0, Math.min(GRID_COLS - 1, (px + 0.5) / DOWNSCALE_FACTOR - 0.5))
+  const c0 = Math.floor(gx)
+  BILINEAR_C0[px] = c0
+  BILINEAR_C1[px] = Math.min(GRID_COLS - 1, c0 + 1)
+  BILINEAR_FC[px] = gx - c0
+}
+
+const BILINEAR_R0 = new Int32Array(UPSCALED_ROWS)
+const BILINEAR_R1 = new Int32Array(UPSCALED_ROWS)
+const BILINEAR_FR = new Float64Array(UPSCALED_ROWS)
+for (let py = 0; py < UPSCALED_ROWS; py++) {
+  // North up: py = 0 corresponds to northernmost row 31, py = 319 to southernmost row 0
+  const gy = Math.max(0, Math.min(GRID_ROWS - 1, (py + 0.5) / DOWNSCALE_FACTOR - 0.5))
+  const gr = GRID_ROWS - 1 - gy
+  const r0 = Math.floor(gr)
+  BILINEAR_R0[py] = r0
+  BILINEAR_R1[py] = Math.min(GRID_ROWS - 1, r0 + 1)
+  BILINEAR_FR[py] = gr - r0
+}
+
+/**
+ * Upscale a 32x36 physical scalar grid to 320x360 via Bilinear Interpolation BEFORE
+ * applying the sequential or zero-centered diverging color scale, reusing a single ImageData
+ * buffer for zero-allocation 60fps scrubbing.
+ */
+function rasterizeBilinear320x360(
+  bufferCanvas: HTMLCanvasElement,
+  reusableImageData: ImageData,
+  grid: Grid2D,
+  scale: ColorScale,
+  palette: PaletteKind,
+  landSeaMask?: Grid2D | null,
+): void {
+  if (bufferCanvas.width !== UPSCALED_COLS || bufferCanvas.height !== UPSCALED_ROWS) {
+    bufferCanvas.width = UPSCALED_COLS
+    bufferCanvas.height = UPSCALED_ROWS
+  }
+
+  const ctx = bufferCanvas.getContext('2d')
+  if (!ctx) return
+
+  const data = reusableImageData.data
+  const scaleMin = scale.min
+  const scaleSpan = scale.max - scaleMin
+  const isDiverging = scale.diverging
+  const invSpan = scaleSpan > 0 ? 1 / scaleSpan : 0
+
+  for (let py = 0; py < UPSCALED_ROWS; py++) {
+    const r0 = BILINEAR_R0[py]
+    const r1 = BILINEAR_R1[py]
+    const fr = BILINEAR_FR[py]
+    const row0 = grid[r0]
+    const row1 = grid[r1]
+    const mRow0 = landSeaMask ? landSeaMask[r0] : null
+    const mRow1 = landSeaMask ? landSeaMask[r1] : null
+    const rowByteOffset = py * UPSCALED_COLS * 4
+
+    for (let px = 0; px < UPSCALED_COLS; px++) {
+      const c0 = BILINEAR_C0[px]
+      const c1 = BILINEAR_C1[px]
+      const fc = BILINEAR_FC[px]
+
+      const v0 = row0[c0] + (row0[c1] - row0[c0]) * fc
+      const v1 = row1[c0] + (row1[c1] - row1[c0]) * fc
+      const interpVal = v0 + (v1 - v0) * fr
+
+      let norm: number
+      if (isDiverging) {
+        norm = interpVal === 0 || invSpan === 0 ? 0.5 : (interpVal - scaleMin) * invSpan
+      } else {
+        norm = invSpan === 0 ? 0 : (interpVal - scaleMin) * invSpan
+      }
+      if (norm < 0) norm = 0
+      else if (norm > 1) norm = 1
+
+      const off = rowByteOffset + px * 4
+      writePaletteColor(palette, norm, data, off)
+
+      if (mRow0 && mRow1) {
+        const m0 = mRow0[c0] + (mRow0[c1] - mRow0[c0]) * fc
+        const m1 = mRow1[c0] + (mRow1[c1] - mRow1[c0]) * fc
+        const landFrac = m0 + (m1 - m0) * fr
+        const sea = (1 - (landFrac < 0 ? 0 : landFrac > 1 ? 1 : landFrac)) * SEA_TINT_STRENGTH
+        if (sea > 0) {
+          const keep = 1 - sea
+          data[off] = Math.round(data[off] * keep + 13 * sea)
+          data[off + 1] = Math.round(data[off + 1] * keep + 18 * sea)
+          data[off + 2] = Math.round(data[off + 2] * keep + 16 * sea)
+        }
+      }
+    }
+  }
+
+  ctx.putImageData(reusableImageData, 0, 0)
 }
 
 interface GridMapProps {
@@ -57,19 +163,27 @@ interface GridMapProps {
     branch?: Grid2D | null
     diff?: Grid2D | null
   }
-  channel?: DisplayChannelId
+  channel?: ViewFieldId
   palette: PaletteKind
   scale: ColorScale
   unit: string
   decimals?: number
   smoothInterpolation?: boolean
+  landSeaMask?: Grid2D | null
+  coastlineSegments?: ContourSegment[]
   isDifference?: boolean
+  windFlowEnabled?: boolean
+  diffWindArrows?: WindArrow[]
   showWindArrows?: boolean
   windArrows?: WindArrow[]
   showTpThresholdOutline?: boolean
   tpSegments?: ContourSegment[]
   shockConfig?: ShockConfig | null
   showShockOverlay?: boolean
+  frontContourSegments?: ContourSegment[]
+  localityRingSegments?: ContourSegment[]
+  refRingSegments?: ContourSegment[]
+  stepDayNumber?: number
   allowShockPlacement?: boolean
   onShockClick?: (row: number, col: number) => void
   onShockDrag?: (startRow: number, startCol: number, endRow: number, endCol: number) => void
@@ -91,14 +205,21 @@ export function GridMap({
   scale,
   unit,
   decimals = 1,
-  smoothInterpolation = false,
+  landSeaMask,
+  coastlineSegments,
   isDifference = false,
+  windFlowEnabled = false,
+  diffWindArrows,
   showWindArrows = false,
   windArrows,
   showTpThresholdOutline = false,
   tpSegments,
   shockConfig,
   showShockOverlay = false,
+  frontContourSegments,
+  localityRingSegments,
+  refRingSegments,
+  stepDayNumber,
   allowShockPlacement = false,
   onShockClick,
   onShockDrag,
@@ -108,30 +229,28 @@ export function GridMap({
 }: GridMapProps) {
   const displayCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const bufferCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const imageDataRef = useRef<ImageData | null>(null)
+  const rasterCacheKeyRef = useRef<{
+    grid: Grid2D | null
+    min: number
+    max: number
+    diverging: boolean
+    palette: PaletteKind
+    landSeaMask: Grid2D | null | undefined
+  } | null>(null)
+
   const containerRef = useRef<HTMLDivElement | null>(null)
   const dragStartRef = useRef<HoveredCell | null>(null)
   const didDragRef = useRef(false)
   const [localHover, setLocalHover] = useState<HoveredCell | null>(null)
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
   const [isPointerInside, setIsPointerInside] = useState(false)
-  const [bufferTick, setBufferTick] = useState(0)
 
   const activeHover = hoveredCell !== undefined ? hoveredCell : localHover
-
-  // Re-rasterize offscreen heatmap buffer ONLY when grid, scale, palette, or smooth mode changes
-  useEffect(() => {
-    if (!grid) return
-    if (!bufferCanvasRef.current) {
-      bufferCanvasRef.current = document.createElement('canvas')
-    }
-    renderHeatmapToBuffer(bufferCanvasRef.current, grid, scale, palette, smoothInterpolation)
-    setBufferTick((t) => t + 1)
-  }, [grid, scale, palette, smoothInterpolation])
 
   const paintCanvas = useCallback(() => {
     const canvas = displayCanvasRef.current
     const container = containerRef.current
-    const buffer = bufferCanvasRef.current
     if (!canvas || !container) return
 
     const rect = container.getBoundingClientRect()
@@ -151,43 +270,93 @@ export function GridMap({
 
     ctx.clearRect(0, 0, targetW, targetH)
 
-    if (!grid || !buffer) return
+    if (!grid) return
+
+    if (!bufferCanvasRef.current) {
+      bufferCanvasRef.current = document.createElement('canvas')
+    }
+    if (!imageDataRef.current) {
+      imageDataRef.current = new ImageData(UPSCALED_COLS, UPSCALED_ROWS)
+    }
+
+    const prev = rasterCacheKeyRef.current
+    const needsRaster =
+      !prev ||
+      prev.grid !== grid ||
+      prev.min !== scale.min ||
+      prev.max !== scale.max ||
+      prev.diverging !== scale.diverging ||
+      prev.palette !== palette ||
+      prev.landSeaMask !== landSeaMask
+
+    if (needsRaster) {
+      rasterizeBilinear320x360(
+        bufferCanvasRef.current,
+        imageDataRef.current,
+        grid,
+        scale,
+        palette,
+        landSeaMask,
+      )
+      rasterCacheKeyRef.current = {
+        grid,
+        min: scale.min,
+        max: scale.max,
+        diverging: scale.diverging,
+        palette,
+        landSeaMask,
+      }
+    }
 
     ctx.save()
-    ctx.imageSmoothingEnabled = smoothInterpolation
-    if (smoothInterpolation) {
-      ctx.imageSmoothingQuality = 'high'
-    }
-    ctx.drawImage(buffer, 0, 0, targetW, targetH)
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(bufferCanvasRef.current, 0, 0, targetW, targetH)
     ctx.restore()
 
     drawCanvasMapOverlays(ctx, {
       width: targetW,
       height: targetH,
       dpr,
+      isLightBackground: scale.diverging,
+      coastlineSegments,
       tpSegments: !isDifference && showTpThresholdOutline ? tpSegments : undefined,
       windArrows: !isDifference && showWindArrows ? windArrows : undefined,
+      diffWindArrows: isDifference && windFlowEnabled ? diffWindArrows : undefined,
       shockConfig,
       showShockOverlay,
+      frontContourSegments,
+      localityRingSegments,
+      refRingSegments,
+      stepDayNumber,
       hoveredCell: activeHover,
       drawGraticule: true,
     })
   }, [
     grid,
-    smoothInterpolation,
+    scale,
+    palette,
+    landSeaMask,
+    coastlineSegments,
     isDifference,
+    windFlowEnabled,
+    diffWindArrows,
     showTpThresholdOutline,
     tpSegments,
     showWindArrows,
     windArrows,
     shockConfig,
     showShockOverlay,
+    frontContourSegments,
+    localityRingSegments,
+    refRingSegments,
+    stepDayNumber,
     activeHover,
   ])
 
   useEffect(() => {
     paintCanvas()
-  }, [paintCanvas, bufferTick])
+  }, [paintCanvas])
 
   useEffect(() => {
     const el = containerRef.current
@@ -199,6 +368,7 @@ export function GridMap({
     return () => observer.disconnect()
   }, [paintCanvas])
 
+  // Snap pointer strictly to the nearest original 1-degree (32x36) grid cell
   const pointerToCell = (e: ReactPointerEvent<HTMLDivElement>): HoveredCell | null => {
     const el = containerRef.current
     if (!el) return null
@@ -275,6 +445,7 @@ export function GridMap({
         ? '#F0B84B'
         : '#26312B'
 
+  // Exact, un-interpolated physical value from the original 32x36 grid cell [row][col]
   const hoverReadout = useMemo(() => {
     if (!activeHover || !grid) return null
     const { row, col } = activeHover
@@ -286,7 +457,9 @@ export function GridMap({
     const formatted = `${sign}${val.toFixed(decimals)} ${unit}`
 
     let wireNote: string | null = null
-    if (!isDifference && physicalState && channel) {
+    if (channel === 'vorticity') {
+      wireNote = 'computed'
+    } else if (!isDifference && physicalState && channel) {
       if (channel === 't2m') {
         wireNote = `${physicalState[0][row][col].toFixed(2)} K`
       } else if (channel === 'msl') {
@@ -314,7 +487,6 @@ export function GridMap({
       formatted,
       wireNote,
       diffNote,
-      channelLabel: channel ? getDisplayChannelMeta(channel).shortLabel : '',
     }
   }, [activeHover, grid, decimals, unit, isDifference, physicalState, compareGrids, channel])
 
@@ -384,8 +556,12 @@ export function GridMap({
           {grid ? (
             <>
               <canvas ref={displayCanvasRef} className="block h-full w-full" />
+              <WindFlowCanvas
+                active={windFlowEnabled && !isDifference}
+                primaryState={physicalState}
+              />
 
-              {/* Small mono tooltip with value, row, col */}
+              {/* Small mono tooltip snapped to exact un-interpolated 1° grid cell */}
               {isPointerInside && tooltipPos && hoverReadout && (
                 <div
                   style={{

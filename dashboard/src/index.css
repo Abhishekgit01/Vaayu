@@ -22,8 +22,8 @@
 }
 
 @theme {
-  --font-sans: 'Geist Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-display: 'Instrument Serif', Georgia, Cambria, serif;
+  --font-sans: 'Sagace', 'Geist Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Sagace', 'Instrument Serif', Georgia, Cambria, serif;
   --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --color-petrichor-bg: #0d1210;

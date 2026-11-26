@@ -11,7 +11,6 @@ import { GripVertical } from 'lucide-react'
 import {
   GRID_COLS,
   GRID_ROWS,
-  type DisplayChannelId,
   type Grid2D,
   type State3D,
 } from '../api/types'
@@ -38,7 +37,9 @@ import {
   type WindArrow,
 } from '../lib/heatmap'
 import type { ShockConfig } from '../lib/shock'
+import type { ViewFieldId } from '../lib/vorticity'
 import type { HoveredCell } from './GridMap'
+import { WindFlowCanvas } from './WindFlowCanvas'
 
 interface SplitCompareMapProps {
   primeGrid: Grid2D | null
@@ -46,7 +47,7 @@ interface SplitCompareMapProps {
   diffGrid: Grid2D | null
   primeState?: State3D | null
   branchState?: State3D | null
-  channel: DisplayChannelId
+  channel: ViewFieldId
   channelLabel: string
   branchLabel: string
   palette: PaletteKind
@@ -54,6 +55,9 @@ interface SplitCompareMapProps {
   unit: string
   decimals: number
   smoothInterpolation: boolean
+  landSeaMask?: Grid2D | null
+  coastlineSegments?: ContourSegment[]
+  windFlowEnabled?: boolean
   splitRatio: number
   onSplitRatioChange: (ratio: number) => void
   showWindArrows: boolean
@@ -64,6 +68,10 @@ interface SplitCompareMapProps {
   branchTpSegments?: ContourSegment[]
   shockConfig: ShockConfig
   showShockOverlay: boolean
+  frontContourSegments?: ContourSegment[]
+  localityRingSegments?: ContourSegment[]
+  refRingSegments?: ContourSegment[]
+  stepDayNumber?: number
   onShockClick: (row: number, col: number) => void
   onShockDrag: (startRow: number, startCol: number, endRow: number, endCol: number) => void
   hoveredCell: HoveredCell | null
@@ -74,6 +82,8 @@ export function SplitCompareMap({
   primeGrid,
   branchGrid,
   diffGrid,
+  primeState,
+  branchState,
   channelLabel,
   branchLabel,
   palette,
@@ -81,6 +91,9 @@ export function SplitCompareMap({
   unit,
   decimals,
   smoothInterpolation,
+  landSeaMask,
+  coastlineSegments,
+  windFlowEnabled = false,
   splitRatio,
   onSplitRatioChange,
   showWindArrows,
@@ -91,6 +104,10 @@ export function SplitCompareMap({
   branchTpSegments,
   shockConfig,
   showShockOverlay,
+  frontContourSegments,
+  localityRingSegments,
+  refRingSegments,
+  stepDayNumber,
   onShockClick,
   onShockDrag,
   hoveredCell,
@@ -113,18 +130,32 @@ export function SplitCompareMap({
     if (!primeBufferRef.current) {
       primeBufferRef.current = document.createElement('canvas')
     }
-    renderHeatmapToBuffer(primeBufferRef.current, primeGrid, scale, palette, smoothInterpolation)
+    renderHeatmapToBuffer(
+      primeBufferRef.current,
+      primeGrid,
+      scale,
+      palette,
+      smoothInterpolation,
+      landSeaMask,
+    )
     setBufferTick((t) => t + 1)
-  }, [primeGrid, scale, palette, smoothInterpolation])
+  }, [primeGrid, scale, palette, smoothInterpolation, landSeaMask])
 
   useEffect(() => {
     if (!branchGrid) return
     if (!branchBufferRef.current) {
       branchBufferRef.current = document.createElement('canvas')
     }
-    renderHeatmapToBuffer(branchBufferRef.current, branchGrid, scale, palette, smoothInterpolation)
+    renderHeatmapToBuffer(
+      branchBufferRef.current,
+      branchGrid,
+      scale,
+      palette,
+      smoothInterpolation,
+      landSeaMask,
+    )
     setBufferTick((t) => t + 1)
-  }, [branchGrid, scale, palette, smoothInterpolation])
+  }, [branchGrid, scale, palette, smoothInterpolation, landSeaMask])
 
   const paintCanvas = useCallback(() => {
     const canvas = displayCanvasRef.current
@@ -211,8 +242,14 @@ export function SplitCompareMap({
       width: targetW,
       height: targetH,
       dpr,
+      isLightBackground: scale.diverging,
+      coastlineSegments,
       shockConfig,
       showShockOverlay,
+      frontContourSegments,
+      localityRingSegments,
+      refRingSegments,
+      stepDayNumber,
       hoveredCell,
       drawGraticule: true,
     })
@@ -229,7 +266,9 @@ export function SplitCompareMap({
   }, [
     primeGrid,
     branchGrid,
+    scale.diverging,
     smoothInterpolation,
+    coastlineSegments,
     splitRatio,
     showTpThresholdOutline,
     primeTpSegments,
@@ -239,6 +278,10 @@ export function SplitCompareMap({
     branchWindArrows,
     shockConfig,
     showShockOverlay,
+    frontContourSegments,
+    localityRingSegments,
+    refRingSegments,
+    stepDayNumber,
     hoveredCell,
   ])
 
@@ -450,6 +493,12 @@ export function SplitCompareMap({
           {primeGrid ? (
             <>
               <canvas ref={displayCanvasRef} className="block h-full w-full" />
+              <WindFlowCanvas
+                active={windFlowEnabled}
+                primaryState={primeState}
+                secondaryState={branchState}
+                splitRatio={splitRatio}
+              />
 
               {/* Draggable rectangular instrument split handle */}
               <div
