@@ -28,15 +28,20 @@ import {
 import {
   drawCanvasMapOverlays,
   drawFieldVectorsAndContours,
-  GRATICULE_LATS,
-  GRATICULE_LONS,
-  latToNormY,
-  lonToNormX,
   renderHeatmapToBuffer,
   type ContourSegment,
   type WindArrow,
 } from '../lib/heatmap'
 import type { ShockConfig } from '../lib/shock'
+import {
+  DEFAULT_MAP_VIEWPORT,
+  getViewportBounds,
+  getViewportGraticuleTicks,
+  panViewportByNormDelta,
+  viewportNormToCell,
+  zoomViewportAtNorm,
+  type MapViewport,
+} from '../lib/viewport'
 import type { ViewFieldId } from '../lib/vorticity'
 import type { HoveredCell } from './GridMap'
 import { WindFlowCanvas } from './WindFlowCanvas'
@@ -72,6 +77,8 @@ interface SplitCompareMapProps {
   localityRingSegments?: ContourSegment[]
   refRingSegments?: ContourSegment[]
   stepDayNumber?: number
+  viewport?: MapViewport
+  onViewportChange?: (next: MapViewport) => void
   onShockClick: (row: number, col: number) => void
   onShockDrag: (startRow: number, startCol: number, endRow: number, endCol: number) => void
   hoveredCell: HoveredCell | null
@@ -108,6 +115,8 @@ export function SplitCompareMap({
   localityRingSegments,
   refRingSegments,
   stepDayNumber,
+  viewport,
+  onViewportChange,
   onShockClick,
   onShockDrag,
   hoveredCell,
@@ -120,10 +129,23 @@ export function SplitCompareMap({
   const shockDragStartRef = useRef<HoveredCell | null>(null)
   const didShockDragRef = useRef(false)
   const isDraggingSplitRef = useRef(false)
+  const panStartRef = useRef<{ clientX: number; clientY: number; viewport: MapViewport } | null>(null)
 
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
   const [isPointerInside, setIsPointerInside] = useState(false)
   const [bufferTick, setBufferTick] = useState(0)
+  const [isPanning, setIsPanning] = useState(false)
+
+  const activeViewport = viewport ?? DEFAULT_MAP_VIEWPORT
+  const viewportBounds = useMemo(() => getViewportBounds(activeViewport), [activeViewport])
+  const graticuleTicks = useMemo(
+    () => getViewportGraticuleTicks(viewportBounds),
+    [viewportBounds],
+  )
+  const latestViewportRef = useRef(activeViewport)
+  latestViewportRef.current = activeViewport
+  const onViewportChangeRef = useRef(onViewportChange)
+  onViewportChangeRef.current = onViewportChange
 
   useEffect(() => {
     if (!primeGrid) return
@@ -186,9 +208,14 @@ export function SplitCompareMap({
     ctx.rect(0, 0, splitX, targetH)
     ctx.clip()
     if (primeGrid && primeBufferRef.current) {
+      const pBuf = primeBufferRef.current
+      const sx = (viewportBounds.gxMin / GRID_COLS) * pBuf.width
+      const sy = (viewportBounds.gyMin / GRID_ROWS) * pBuf.height
+      const sw = (viewportBounds.spanGx / GRID_COLS) * pBuf.width
+      const sh = (viewportBounds.spanGy / GRID_ROWS) * pBuf.height
       ctx.imageSmoothingEnabled = smoothInterpolation
       if (smoothInterpolation) ctx.imageSmoothingQuality = 'high'
-      ctx.drawImage(primeBufferRef.current, 0, 0, targetW, targetH)
+      ctx.drawImage(pBuf, sx, sy, sw, sh, 0, 0, targetW, targetH)
       drawFieldVectorsAndContours(
         ctx,
         targetW,
@@ -196,6 +223,7 @@ export function SplitCompareMap({
         dpr,
         showTpThresholdOutline ? primeTpSegments : undefined,
         showWindArrows ? primeWindArrows : undefined,
+        viewportBounds,
       )
     } else {
       ctx.fillStyle = '#141B18'
@@ -209,9 +237,14 @@ export function SplitCompareMap({
     ctx.rect(splitX, 0, targetW - splitX, targetH)
     ctx.clip()
     if (branchGrid && branchBufferRef.current) {
+      const bBuf = branchBufferRef.current
+      const sx = (viewportBounds.gxMin / GRID_COLS) * bBuf.width
+      const sy = (viewportBounds.gyMin / GRID_ROWS) * bBuf.height
+      const sw = (viewportBounds.spanGx / GRID_COLS) * bBuf.width
+      const sh = (viewportBounds.spanGy / GRID_ROWS) * bBuf.height
       ctx.imageSmoothingEnabled = smoothInterpolation
       if (smoothInterpolation) ctx.imageSmoothingQuality = 'high'
-      ctx.drawImage(branchBufferRef.current, 0, 0, targetW, targetH)
+      ctx.drawImage(bBuf, sx, sy, sw, sh, 0, 0, targetW, targetH)
       drawFieldVectorsAndContours(
         ctx,
         targetW,
@@ -219,6 +252,7 @@ export function SplitCompareMap({
         dpr,
         showTpThresholdOutline ? branchTpSegments : undefined,
         showWindArrows ? branchWindArrows : undefined,
+        viewportBounds,
       )
     } else {
       ctx.fillStyle = '#141B18'
@@ -243,6 +277,8 @@ export function SplitCompareMap({
       height: targetH,
       dpr,
       isLightBackground: scale.diverging,
+      viewportBounds,
+      landSeaMask,
       coastlineSegments,
       shockConfig,
       showShockOverlay,
@@ -283,6 +319,8 @@ export function SplitCompareMap({
     refRingSegments,
     stepDayNumber,
     hoveredCell,
+    viewportBounds,
+    landSeaMask,
   ])
 
   useEffect(() => {
@@ -299,6 +337,25 @@ export function SplitCompareMap({
     return () => observer.disconnect()
   }, [paintCanvas])
 
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      const changeCb = onViewportChangeRef.current
+      if (!changeCb) return
+      e.preventDefault()
+      const rect = el.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+      const nx = (e.clientX - rect.left) / rect.width
+      const ny = (e.clientY - rect.top) / rect.height
+      const cur = latestViewportRef.current
+      const factor = e.deltaY < 0 ? 1.25 : 0.8
+      changeCb(zoomViewportAtNorm(cur, cur.zoom * factor, nx, ny))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
   const pointerToCell = (e: ReactPointerEvent<HTMLElement>): HoveredCell | null => {
     const el = containerRef.current
     if (!el) return null
@@ -306,11 +363,7 @@ export function SplitCompareMap({
     if (rect.width <= 0 || rect.height <= 0) return null
     const nx = (e.clientX - rect.left) / rect.width
     const ny = (e.clientY - rect.top) / rect.height
-    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return null
-    const col = Math.max(0, Math.min(GRID_COLS - 1, Math.floor(nx * GRID_COLS)))
-    const visualY = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(ny * GRID_ROWS)))
-    const row = GRID_ROWS - 1 - visualY
-    return { row, col }
+    return viewportNormToCell(nx, ny, viewportBounds)
   }
 
   const handleSplitPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -347,6 +400,17 @@ export function SplitCompareMap({
   }
 
   const handleMapPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (Boolean(onViewportChange) && activeViewport.zoom > 1.001) {
+      e.preventDefault()
+      e.currentTarget.setPointerCapture(e.pointerId)
+      panStartRef.current = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        viewport: activeViewport,
+      }
+      setIsPanning(true)
+      return
+    }
     const cell = pointerToCell(e)
     if (!cell) return
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -355,6 +419,16 @@ export function SplitCompareMap({
   }
 
   const handleMapPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (panStartRef.current && onViewportChange && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0) {
+        const dnx = (e.clientX - panStartRef.current.clientX) / rect.width
+        const dny = (e.clientY - panStartRef.current.clientY) / rect.height
+        onViewportChange(panViewportByNormDelta(panStartRef.current.viewport, dnx, dny))
+      }
+      return
+    }
+
     const cell = pointerToCell(e)
     setIsPointerInside(true)
     if (containerRef.current) {
@@ -363,7 +437,7 @@ export function SplitCompareMap({
     }
     onHoverCell(cell)
 
-    if (shockDragStartRef.current && cell) {
+    if (activeViewport.zoom <= 1.001 && shockDragStartRef.current && cell) {
       const start = shockDragStartRef.current
       if (start.row !== cell.row || start.col !== cell.col) {
         didShockDragRef.current = true
@@ -373,6 +447,11 @@ export function SplitCompareMap({
   }
 
   const handleMapPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (panStartRef.current) {
+      panStartRef.current = null
+      setIsPanning(false)
+      return
+    }
     if (!shockDragStartRef.current) return
     const cell = pointerToCell(e) ?? shockDragStartRef.current
     if (didShockDragRef.current) {
@@ -387,7 +466,7 @@ export function SplitCompareMap({
   const handleMapPointerLeave = () => {
     setIsPointerInside(false)
     setTooltipPos(null)
-    if (!shockDragStartRef.current) {
+    if (!shockDragStartRef.current && !panStartRef.current) {
       onHoverCell(null)
     }
   }
@@ -468,18 +547,15 @@ export function SplitCompareMap({
 
       <div className="grid grid-cols-[36px_1fr] gap-x-1.5">
         <div className="relative select-none">
-          {GRATICULE_LATS.map((lat) => {
-            const topPct = latToNormY(lat) * 100
-            return (
-              <span
-                key={lat}
-                style={{ top: `${topPct}%` }}
-                className="tabular-nums absolute right-0 -translate-y-1/2 font-mono text-[10px] text-[#5A645D]"
-              >
-                {lat}°N
-              </span>
-            )
-          })}
+          {graticuleTicks.lats.map((tick) => (
+            <span
+              key={tick.value}
+              style={{ top: `${tick.normPos * 100}%` }}
+              className="tabular-nums absolute right-0 -translate-y-1/2 font-mono text-[10px] text-[#5A645D]"
+            >
+              {tick.value}°N
+            </span>
+          ))}
         </div>
 
         <div
@@ -488,7 +564,13 @@ export function SplitCompareMap({
           onPointerMove={handleMapPointerMove}
           onPointerUp={handleMapPointerUp}
           onPointerLeave={handleMapPointerLeave}
-          className="relative aspect-[36/32] w-full cursor-crosshair select-none overflow-hidden rounded-[2px] border border-[#26312B] bg-[#141B18] touch-none"
+          className={`relative aspect-[36/32] w-full select-none overflow-hidden rounded-[2px] border border-[#26312B] bg-[#141B18] touch-none ${
+            isPanning
+              ? 'cursor-grabbing'
+              : activeViewport.zoom > 1.001
+                ? 'cursor-grab'
+                : 'cursor-crosshair'
+          }`}
         >
           {primeGrid ? (
             <>
@@ -498,6 +580,7 @@ export function SplitCompareMap({
                 primaryState={primeState}
                 secondaryState={branchState}
                 splitRatio={splitRatio}
+                viewportBounds={viewportBounds}
               />
 
               {/* Draggable rectangular instrument split handle */}
@@ -561,16 +644,16 @@ export function SplitCompareMap({
         <div />
 
         <div className="relative mt-1 h-4 select-none">
-          {GRATICULE_LONS.map((lon) => {
-            const leftPct = lonToNormX(lon) * 100
-            const alignClass = lon === 100 ? '-translate-x-[82%]' : '-translate-x-1/2'
+          {graticuleTicks.lons.map((tick) => {
+            const leftPct = tick.normPos * 100
+            const alignClass = leftPct > 92 ? '-translate-x-[82%]' : '-translate-x-1/2'
             return (
               <span
-                key={lon}
+                key={tick.value}
                 style={{ left: `${leftPct}%` }}
                 className={`tabular-nums absolute top-0 font-mono text-[10px] text-[#5A645D] ${alignClass}`}
               >
-                {lon}°E
+                {tick.value}°E
               </span>
             )
           })}

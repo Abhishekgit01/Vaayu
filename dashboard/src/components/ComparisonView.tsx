@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { RotateCcw, ZoomIn, ZoomOut } from 'lucide-react'
 import type { DisplayChannelId, StateSequence } from '../api/types'
 import { paletteForChannel } from '../lib/colormaps'
 import { GRID_COLS, GRID_ROWS, type Grid2D } from '../api/types'
@@ -8,8 +9,15 @@ import { precomputeRolloutWorkspace } from '../lib/heatmap'
 import {
   createWarmBayOfBengalPreset,
   createWeakerArabianSeaWindPreset,
+  getShockMask,
   type ShockConfig,
 } from '../lib/shock'
+import {
+  computeViewportForShockMask,
+  DEFAULT_MAP_VIEWPORT,
+  zoomViewportAtNorm,
+  type MapViewport,
+} from '../lib/viewport'
 import { VORTICITY_META, type ViewFieldId } from '../lib/vorticity'
 import { GridMap, type HoveredCell } from './GridMap'
 import type { StageMode } from './MapControls'
@@ -154,7 +162,15 @@ export function ComparisonView({
   const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null)
   const [splitRatio, setSplitRatio] = useState<number>(0.5)
   const [dimensionMode, setDimensionMode] = useState<'2d' | '3d'>('2d')
+  const [viewport, setViewport] = useState<MapViewport>(DEFAULT_MAP_VIEWPORT)
   const geoInputRef = useRef<HTMLInputElement | null>(null)
+
+  const handleFocusShock = () => {
+    const targetMask = isShockSet
+      ? getShockMask(null, shockConfig, geography?.landSeaMask)
+      : appliedShockMask
+    setViewport(computeViewportForShockMask(targetMask))
+  }
 
   const handleGeoInput = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -311,11 +327,10 @@ export function ComparisonView({
             <span className="font-mono text-[10px] text-[#7FB5B0]">computed</span>
           </button>
 
-          {/* In-memory Geography land_sea_mask importer */}
+          {/* In-memory GeoJSON / land_sea_mask importer */}
           <input
             ref={geoInputRef}
             type="file"
-            accept=".json,application/json"
             onChange={handleGeoInput}
             className="hidden"
           />
@@ -387,6 +402,50 @@ export function ComparisonView({
                 {smoothInterpolation ? 'Interpolated' : 'Crisp cells'}
               </button>
             </>
+          )}
+
+          {(dimensionMode === '2d' || compareMode === 'split') && (
+            <div className="inline-flex items-center overflow-hidden rounded-[2px] border border-[#26312B] bg-[#141B18] font-mono text-[11px]">
+              <button
+                type="button"
+                disabled={viewport.zoom <= 1.001}
+                onClick={() => setViewport(zoomViewportAtNorm(viewport, viewport.zoom / 1.4))}
+                title="Zoom out"
+                aria-label="Zoom out"
+                className="ui-transition px-1.5 py-0.5 text-[#8C958D] hover:text-[#ECE7DA] disabled:opacity-35 cursor-pointer"
+              >
+                <ZoomOut className="h-3 w-3" strokeWidth={1.5} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewport(DEFAULT_MAP_VIEWPORT)}
+                title="Reset zoom to 1×"
+                className="tabular-nums ui-transition border-l border-[#26312B] px-1.5 py-0.5 text-[#ECE7DA] hover:text-[#7FB5B0] cursor-pointer"
+              >
+                {viewport.zoom.toFixed(1)}×
+              </button>
+              <button
+                type="button"
+                disabled={viewport.zoom >= 6}
+                onClick={() => setViewport(zoomViewportAtNorm(viewport, viewport.zoom * 1.4))}
+                title="Zoom in (scroll wheel on map; drag to pan)"
+                aria-label="Zoom in"
+                className="ui-transition border-l border-[#26312B] px-1.5 py-0.5 text-[#8C958D] hover:text-[#ECE7DA] disabled:opacity-35 cursor-pointer"
+              >
+                <ZoomIn className="h-3 w-3" strokeWidth={1.5} />
+              </button>
+              {(isShockSet || hasBranch) && (
+                <button
+                  type="button"
+                  onClick={handleFocusShock}
+                  title="Zoom to active shock footprint"
+                  className="ui-transition inline-flex items-center gap-1 border-l border-[#26312B] px-2 py-0.5 text-[#7FB5B0] hover:text-[#ECE7DA] cursor-pointer"
+                >
+                  <RotateCcw className="h-2.5 w-2.5" strokeWidth={1.5} />
+                  Focus shock
+                </button>
+              )}
+            </div>
           )}
 
           {/* 2D / 3D toggle (for Prime, Branch, and Difference single-field views) */}
@@ -479,6 +538,8 @@ export function ComparisonView({
                 tpSegments={primeTpSegments}
                 shockConfig={shockConfig}
                 showShockOverlay={showFootprintOutline}
+                viewport={viewport}
+                onViewportChange={setViewport}
                 allowShockPlacement
                 onShockClick={onShockClick}
                 onShockDrag={onShockDrag}
@@ -544,6 +605,8 @@ export function ComparisonView({
                 localityRingSegments={activeLocalityRing}
                 refRingSegments={activeRefRing}
                 stepDayNumber={stepDayNumber}
+                viewport={viewport}
+                onViewportChange={setViewport}
                 allowShockPlacement
                 onShockClick={onShockClick}
                 onShockDrag={onShockDrag}
@@ -613,6 +676,8 @@ export function ComparisonView({
                 localityRingSegments={activeLocalityRing}
                 refRingSegments={activeRefRing}
                 stepDayNumber={stepDayNumber}
+                viewport={viewport}
+                onViewportChange={setViewport}
                 allowShockPlacement
                 onShockClick={onShockClick}
                 onShockDrag={onShockDrag}
@@ -655,6 +720,8 @@ export function ComparisonView({
                 localityRingSegments={activeLocalityRing}
                 refRingSegments={activeRefRing}
                 stepDayNumber={stepDayNumber}
+                viewport={viewport}
+                onViewportChange={setViewport}
                 onShockClick={onShockClick}
                 onShockDrag={onShockDrag}
                 hoveredCell={hoveredCell}

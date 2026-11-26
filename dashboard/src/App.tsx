@@ -281,7 +281,7 @@ export default function App() {
           controller.signal,
         )
         setBranchRollout(branchRes.rollout)
-        setAppliedShockMask(getShockMask(perturbation, configSnapshot))
+        setAppliedShockMask(getShockMask(perturbation, configSnapshot, geography?.landSeaMask))
         setBranchLabel(label)
         setInferenceMs(branchRes.inference_ms)
       } catch (err) {
@@ -293,19 +293,19 @@ export default function App() {
         }
       }
     },
-    [scenario],
+    [scenario, geography],
   )
 
   const handleRunShock = useCallback(() => {
     if (!scenario) return
     const lastInputDay = scenario.init_states[2]
-    const perturbation = buildPerturbation(shockConfig, lastInputDay)
+    const perturbation = buildPerturbation(shockConfig, lastInputDay, geography?.landSeaMask)
     const summary = shockConfig.presetName
       ? `${shockConfig.presetName} (${summarizeShockChannels(shockConfig)})`
       : summarizeShockChannels(shockConfig)
     setCompareMode((prev) => (prev === 'prime' ? 'branch' : prev))
     void executeShockRun(perturbation, summary, shockConfig)
-  }, [scenario, shockConfig, executeShockRun])
+  }, [scenario, shockConfig, geography, executeShockRun])
 
   const handleApplyPresetAndRun = useCallback(
     (preset: ShockConfig) => {
@@ -313,14 +313,14 @@ export default function App() {
       setHasTouchedShock(true)
       if (!scenario) return
       const lastInputDay = scenario.init_states[2]
-      const perturbation = buildPerturbation(preset, lastInputDay)
+      const perturbation = buildPerturbation(preset, lastInputDay, geography?.landSeaMask)
       const summary = preset.presetName
         ? `${preset.presetName} (${summarizeShockChannels(preset)})`
         : summarizeShockChannels(preset)
       setCompareMode((prev) => (prev === 'prime' ? 'branch' : prev))
       void executeShockRun(perturbation, summary, preset)
     },
-    [scenario, executeShockRun],
+    [scenario, geography, executeShockRun],
   )
 
   const handleRunZeroShock = useCallback(() => {
@@ -379,6 +379,9 @@ export default function App() {
   const handleClearGeography = useCallback(() => {
     setGeography(null)
     setGeographyError(null)
+    setShockConfig((prev) =>
+      prev.domainMask && prev.domainMask !== 'all' ? { ...prev, domainMask: 'all' } : prev,
+    )
   }, [])
 
   const handleSelectPhysicalChannel = useCallback((nextChannel: DisplayChannelId) => {
@@ -404,9 +407,6 @@ export default function App() {
         onStepsChange={setSteps}
         hasScenario={scenario !== null}
         scenarioLabel={scenario?.sourceLabel}
-        geographyLabel={geography?.sourceLabel ?? null}
-        onImportGeographyFile={(file) => void handleImportGeographyFile(file)}
-        onClearGeography={handleClearGeography}
         isSimulating={isSimulating}
         onRefreshHealth={() => void pollHealth()}
         onResetScenario={handleResetScenario}
@@ -444,6 +444,8 @@ export default function App() {
           steps={steps}
           onStepsChange={setSteps}
           onImport={handleImportScenario}
+          geographyLabel={geography?.sourceLabel ?? null}
+          onImportGeographyFile={(file) => void handleImportGeographyFile(file)}
           health={health}
         />
       ) : (
@@ -518,6 +520,7 @@ export default function App() {
                   onRunZeroShock={handleRunZeroShock}
                   isSimulating={isSimulating}
                   hasPrime={primeRollout !== null && primeSteps === steps}
+                  landSeaMask={geography?.landSeaMask ?? null}
                 />
               </div>
             </div>

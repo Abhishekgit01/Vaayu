@@ -1,5 +1,6 @@
 import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import type { ScenarioData } from '../api/types'
+import { isGeographyPayload } from '../lib/geography'
 import { parseAndValidateScenario } from '../lib/validation'
 import { AsciiRainscapeBg } from './AsciiRainscapeBg'
 import { MonsoonMascot } from './MonsoonMascot'
@@ -9,6 +10,8 @@ interface EmptyStateProps {
   steps: number
   onStepsChange: (steps: number) => void
   onImport: (scenario: ScenarioData) => void
+  geographyLabel?: string | null
+  onImportGeographyFile?: (file: File) => void
   health: HealthState
 }
 
@@ -16,6 +19,8 @@ export function EmptyState({
   steps,
   onStepsChange,
   onImport,
+  geographyLabel,
+  onImportGeographyFile,
   health,
 }: EmptyStateProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -37,15 +42,33 @@ export function EmptyState({
     onImport(result.data)
   }
 
-  const handleFile = async (file: File) => {
+  const handleFiles = async (files: FileList | File[]) => {
+    const list = Array.from(files)
+    if (list.length === 0) return
     setIsReadingFile(true)
     setValidationError(null)
     try {
-      const text = await file.text()
-      processRawText(text, file.name)
+      for (const file of list) {
+        if (onImportGeographyFile && file.name.toLowerCase().endsWith('.geojson')) {
+          onImportGeographyFile(file)
+          continue
+        }
+        const text = await file.text()
+        if (onImportGeographyFile) {
+          try {
+            if (isGeographyPayload(JSON.parse(text))) {
+              onImportGeographyFile(file)
+              continue
+            }
+          } catch {
+            // fall through to scenario validation for clearer syntax error reporting
+          }
+        }
+        processRawText(text, file.name)
+      }
     } catch (err) {
       setValidationError(
-        `Could not read file "${file.name}": ${err instanceof Error ? err.message : String(err)}`,
+        `Could not read file: ${err instanceof Error ? err.message : String(err)}`,
       )
     } finally {
       setIsReadingFile(false)
@@ -53,9 +76,8 @@ export function EmptyState({
   }
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      void handleFile(file)
+    if (e.target.files && e.target.files.length > 0) {
+      void handleFiles(e.target.files)
     }
     e.target.value = ''
   }
@@ -63,10 +85,8 @@ export function EmptyState({
   const handleDrop = (e: DragEvent<HTMLElement>) => {
     e.preventDefault()
     setIsDragging(false)
-    const file = e.dataTransfer.files?.[0]
-    if (file) {
-      setBgDestroyed(true)
-      void handleFile(file)
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      void handleFiles(e.dataTransfer.files)
     }
   }
 
@@ -103,22 +123,22 @@ export function EmptyState({
       />
 
       <div className="panel-enter relative z-10 mx-auto w-full max-w-[1680px] px-6 py-16 sm:px-12">
-        <div className="max-w-xl">
-          <h2 className="font-serif-display text-5xl leading-[1.02] tracking-tight text-[#ECE7DA] sm:text-7xl">
+        <div className="max-w-2xl">
+          <h2 className="font-serif-display text-6xl leading-[1.0] tracking-tight text-[#ECE7DA] sm:text-8xl">
             Load a starting atmosphere.
           </h2>
 
-          <p className="mt-4 max-w-md text-[15px] leading-relaxed text-[#8C958D]">
-            Provide three consecutive days of physical fields (<code className="font-mono text-xs text-[#ECE7DA]">[3][6][32][36]</code>) and{' '}
-            <code className="font-mono text-xs text-[#ECE7DA]">doy_sincos</code> over 6.5°–37.5°N, 65.5°–100.5°E.
+          <p className="mt-5 max-w-xl text-base leading-relaxed text-[#8C958D] sm:text-lg">
+            Provide three consecutive days of physical fields (<code className="font-mono text-sm text-[#ECE7DA]">[3][6][32][36]</code>) and{' '}
+            <code className="font-mono text-sm text-[#ECE7DA]">doy_sincos</code> over 6.5°–37.5°N, 65.5°–100.5°E.
           </p>
 
           {/* Actions */}
-          <div className="mt-8 flex flex-wrap items-center gap-6">
+          <div className="mt-9 flex flex-wrap items-center gap-6">
             <input
               ref={fileInputRef}
               type="file"
-              accept=".json,application/json"
+              multiple
               onChange={handleFileChange}
               className="hidden"
             />
@@ -126,24 +146,27 @@ export function EmptyState({
               type="button"
               disabled={isReadingFile}
               onClick={() => {
-                setBgDestroyed(true)
                 fileInputRef.current?.click()
               }}
-              className="ui-transition rounded-[3px] border border-[#F0B84B] bg-[#F0B84B] px-5 py-2.5 text-sm font-medium text-[#0D1210] hover:bg-[#f4c668] disabled:opacity-50 cursor-pointer"
+              className="ui-transition rounded-[3px] border border-[#F0B84B] bg-[#F0B84B] px-6 py-3 text-base font-medium text-[#0D1210] hover:bg-[#f4c668] disabled:opacity-50 cursor-pointer"
             >
-              {isReadingFile ? 'Reading scenario…' : 'Import scenario file'}
+              {isReadingFile
+                ? 'Reading file…'
+                : geographyLabel
+                  ? 'Select scenario JSON to start'
+                  : 'Import scenario / geojson'}
             </button>
 
             <button
               type="button"
               onClick={() => setShowPasteBox((v) => !v)}
               aria-expanded={showPasteBox}
-              className="ui-transition text-sm text-[#7FB5B0] underline-offset-4 hover:underline cursor-pointer"
+              className="ui-transition text-base text-[#7FB5B0] underline-offset-4 hover:underline cursor-pointer"
             >
               {showPasteBox ? 'Hide JSON input' : 'Paste JSON'}
             </button>
 
-            <label className="inline-flex items-center gap-2 border-l border-[#26312B] pl-5 text-xs text-[#8C958D]">
+            <label className="inline-flex items-center gap-2.5 border-l border-[#26312B] pl-5 text-sm text-[#8C958D]">
               <span>Horizon</span>
               <input
                 type="number"
@@ -154,11 +177,21 @@ export function EmptyState({
                   const val = Number.parseInt(e.target.value, 10)
                   if (!Number.isNaN(val)) onStepsChange(Math.max(1, Math.min(60, val)))
                 }}
-                className="tabular-nums w-12 rounded-[2px] border border-[#26312B] bg-[#141B18] px-1.5 py-1 text-center font-mono text-xs text-[#ECE7DA] focus:border-[#7FB5B0] focus:outline-none"
+                className="tabular-nums w-14 rounded-[2px] border border-[#26312B] bg-[#141B18] px-2 py-1.5 text-center font-mono text-sm text-[#ECE7DA] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:border-[#7FB5B0] focus:outline-none"
               />
               <span className="font-mono">days</span>
             </label>
           </div>
+
+          {geographyLabel && (
+            <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-[#7FB5B0]/40 bg-[#141B18] px-3.5 py-1.5 text-xs text-[#ECE7DA]">
+              <span className="h-2 w-2 rounded-full bg-[#7FB5B0]" />
+              <span>
+                Geography ready: <span className="font-mono text-[#7FB5B0]">{geographyLabel}</span>{' '}
+                — pick <span className="font-mono">monsoon_scenario.json</span> to launch
+              </span>
+            </div>
+          )}
 
           {/* Expandable mono JSON paste area */}
           {showPasteBox && (

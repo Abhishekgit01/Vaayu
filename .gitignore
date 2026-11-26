@@ -17,10 +17,14 @@ monsoon_data/
 # Frontend build & dependencies
 dashboard/node_modules/
 dashboard/dist/
+node_modules/
+dist/
 
 # Local planning docs, archives & Archify scratch
 .archify/
 docs/vaayu-architecture.html
+PROJECT_SUMMARY.md
+Vaayu_Complete_Guide.pdf
 Monsoon Twin — *.md
 Monsoon Twin Technical Brief (1).pdf
 Yugaantar DevForge Tracks.pdf

@@ -3,12 +3,14 @@ import {
   GRID_ROWS,
   NUM_CHANNELS,
   type ChannelKey,
+  type Grid2D,
   type State3D,
 } from '../api/types'
 import { CHANNEL_BY_KEY, CHANNELS } from './constants'
 
 export type ShockShape = 'box' | 'gaussian'
 export type AmplitudeMode = 'absolute' | 'percent'
+export type DomainMaskMode = 'all' | 'land' | 'sea'
 
 export interface GridPoint {
   row: number
@@ -37,6 +39,10 @@ export interface ShockConfig {
   gaussianStroke?: GridPoint[]
   /** Internal drag-origin tracker to append smoothly during a Gaussian paint drag */
   strokeOrigin?: GridPoint | null
+  /** Optional Gaussian boundary feathering (0..3 cells) for box shape */
+  edgeFeather?: number
+  /** Optional land/sea clipping when geography.json is loaded */
+  domainMask?: DomainMaskMode
   /** Per-channel delta specifications */
   channels: Record<ChannelKey, ChannelShockSpec>
   /** Active preset identifier, if any */
@@ -79,6 +85,8 @@ export function createEmptyShockConfig(): ShockConfig {
     gaussianSigma: 3.0,
     gaussianStroke: [{ row: 14, col: 18 }],
     strokeOrigin: null,
+    edgeFeather: 0,
+    domainMask: 'all',
     channels: {
       t2m: { enabled: false, mode: 'absolute', value: 0 },
       tp: { enabled: false, mode: 'absolute', value: 0 },
@@ -149,6 +157,198 @@ export function createWeakerArabianSeaWindPreset(): ShockConfig {
   }
 }
 
+export interface ExtraPresetDescriptor {
+  id: string
+  title: string
+  detail: string
+  create: () => ShockConfig
+}
+
+export function createBayOfBengalCycloneSeedPreset(): ShockConfig {
+  const base = createEmptyShockConfig()
+  return {
+    ...base,
+    shape: 'gaussian',
+    boxRowMin: 6,
+    boxRowMax: 11,
+    boxColMin: 19,
+    boxColMax: 24,
+    centerRow: 8,
+    centerCol: 21,
+    gaussianSigma: 3.0,
+    gaussianStroke: [{ row: 8, col: 21 }],
+    strokeOrigin: null,
+    channels: {
+      ...base.channels,
+      t2m: { enabled: true, mode: 'absolute', value: 2.0 },
+      msl: { enabled: true, mode: 'absolute', value: -1200 },
+      tcwv: { enabled: true, mode: 'percent', value: 20 },
+    },
+    presetName: 'Bay of Bengal Cyclone Seed',
+  }
+}
+
+export function createSomaliJetSurgePreset(): ShockConfig {
+  const base = createEmptyShockConfig()
+  return {
+    ...base,
+    shape: 'box',
+    boxRowMin: 2,
+    boxRowMax: 11,
+    boxColMin: 0,
+    boxColMax: 9,
+    centerRow: 6.5,
+    centerCol: 4.5,
+    edgeFeather: 1.0,
+    channels: {
+      ...base.channels,
+      u10: { enabled: true, mode: 'percent', value: 35 },
+      v10: { enabled: true, mode: 'percent', value: 25 },
+      tcwv: { enabled: true, mode: 'percent', value: 10 },
+    },
+    presetName: 'Somali Jet Surge',
+  }
+}
+
+export function createNorthwestHeatDomePreset(): ShockConfig {
+  const base = createEmptyShockConfig()
+  return {
+    ...base,
+    shape: 'box',
+    boxRowMin: 18,
+    boxRowMax: 23,
+    boxColMin: 4,
+    boxColMax: 12,
+    centerRow: 20.5,
+    centerCol: 8,
+    edgeFeather: 1.0,
+    channels: {
+      ...base.channels,
+      t2m: { enabled: true, mode: 'absolute', value: 4.5 },
+      msl: { enabled: true, mode: 'absolute', value: 400 },
+      tcwv: { enabled: true, mode: 'percent', value: -20 },
+    },
+    presetName: 'Northwest Heat Dome',
+  }
+}
+
+export function createDeccanBreakMonsoonPreset(): ShockConfig {
+  const base = createEmptyShockConfig()
+  return {
+    ...base,
+    shape: 'box',
+    boxRowMin: 7,
+    boxRowMax: 14,
+    boxColMin: 9,
+    boxColMax: 15,
+    centerRow: 10.5,
+    centerCol: 12,
+    edgeFeather: 1.0,
+    channels: {
+      ...base.channels,
+      t2m: { enabled: true, mode: 'absolute', value: 2.5 },
+      tcwv: { enabled: true, mode: 'percent', value: -30 },
+    },
+    presetName: 'Deccan Break-Monsoon Dry Shock',
+  }
+}
+
+export function createHimalayanColdIntrusionPreset(): ShockConfig {
+  const base = createEmptyShockConfig()
+  return {
+    ...base,
+    shape: 'box',
+    boxRowMin: 23,
+    boxRowMax: 29,
+    boxColMin: 8,
+    boxColMax: 15,
+    centerRow: 26,
+    centerCol: 11.5,
+    edgeFeather: 1.0,
+    channels: {
+      ...base.channels,
+      t2m: { enabled: true, mode: 'absolute', value: -4.0 },
+      tcwv: { enabled: true, mode: 'percent', value: 15 },
+    },
+    presetName: 'Himalayan Cold Intrusion',
+  }
+}
+
+export function createIndoGangeticMoisturePreset(): ShockConfig {
+  const base = createEmptyShockConfig()
+  return {
+    ...base,
+    shape: 'box',
+    boxRowMin: 17,
+    boxRowMax: 22,
+    boxColMin: 10,
+    boxColMax: 23,
+    centerRow: 19.5,
+    centerCol: 16.5,
+    edgeFeather: 1.0,
+    channels: {
+      ...base.channels,
+      t2m: { enabled: true, mode: 'absolute', value: 1.5 },
+      tcwv: { enabled: true, mode: 'percent', value: 25 },
+    },
+    presetName: 'Indo-Gangetic Moisture Plume',
+  }
+}
+
+export const EXTRA_SHOCK_PRESETS: readonly ExtraPresetDescriptor[] = [
+  {
+    id: 'cyclone_seed',
+    title: 'Bay of Bengal Cyclone Seed',
+    detail: '−1200 Pa msl, +2.0 K t2m, +20% tcwv · 14.5°N, 86.5°E (Gaussian)',
+    create: createBayOfBengalCycloneSeedPreset,
+  },
+  {
+    id: 'somali_jet',
+    title: 'Somali Jet Surge',
+    detail: '+35% u10, +25% v10, +10% tcwv · 8–18°N, 65–75°E',
+    create: createSomaliJetSurgePreset,
+  },
+  {
+    id: 'nw_heat_dome',
+    title: 'Northwest Heat Dome',
+    detail: '+4.5 K t2m, −20% tcwv, +400 Pa msl · Rajasthan',
+    create: createNorthwestHeatDomePreset,
+  },
+  {
+    id: 'deccan_break',
+    title: 'Deccan Break-Monsoon Dry Shock',
+    detail: '−30% tcwv, +2.5 K t2m · Deccan Plateau',
+    create: createDeccanBreakMonsoonPreset,
+  },
+  {
+    id: 'himalayan_cold',
+    title: 'Himalayan Cold Intrusion',
+    detail: '−4.0 K t2m, +15% tcwv · J&K / HP / UK',
+    create: createHimalayanColdIntrusionPreset,
+  },
+  {
+    id: 'igp_moisture',
+    title: 'Indo-Gangetic Moisture Plume',
+    detail: '+25% tcwv, +1.5 K t2m · Indo-Gangetic Plain',
+    create: createIndoGangeticMoisturePreset,
+  },
+] as const
+
+export function undoLastGaussianStroke(config: ShockConfig): ShockConfig {
+  const pts = getGaussianStrokePoints(config)
+  if (pts.length <= 1) return config
+  const next = pts.slice(0, -1)
+  const last = next[next.length - 1]
+  return {
+    ...config,
+    centerRow: last.row,
+    centerCol: last.col,
+    gaussianStroke: next,
+    strokeOrigin: null,
+    presetName: null,
+  }
+}
+
 export function getGaussianStrokePoints(config: ShockConfig): GridPoint[] {
   if (config.gaussianStroke && config.gaussianStroke.length > 0) {
     return config.gaussianStroke
@@ -159,27 +359,27 @@ export function getGaussianStrokePoints(config: ShockConfig): GridPoint[] {
 /**
  * Spatial weight [0..1] for each cell (row, col), strictly 0 outside the shock region.
  */
-export function computeSpatialWeights(config: ShockConfig): number[][] {
-  const weights: number[][] = new Array(GRID_ROWS)
+export function computeSpatialWeights(
+  config: ShockConfig,
+  landSeaMask?: Grid2D | null,
+): number[][] {
+  const weights: number[][] = Array.from({ length: GRID_ROWS }, () =>
+    new Array<number>(GRID_COLS).fill(0),
+  )
   const rMin = Math.max(0, Math.min(config.boxRowMin, config.boxRowMax))
   const rMax = Math.min(GRID_ROWS - 1, Math.max(config.boxRowMin, config.boxRowMax))
   const cMin = Math.max(0, Math.min(config.boxColMin, config.boxColMax))
   const cMax = Math.min(GRID_COLS - 1, Math.max(config.boxColMin, config.boxColMax))
 
-  const sigma = Math.max(0.5, config.gaussianSigma)
-  const cutoffRadius = sigma * 2.5
-  const cutoffSq = cutoffRadius * cutoffRadius
-  const twoSigmaSq = 2 * sigma * sigma
-  const strokePts = config.shape === 'gaussian' ? getGaussianStrokePoints(config) : []
+  if (config.shape === 'gaussian') {
+    const sigma = Math.max(0.5, config.gaussianSigma)
+    const cutoffRadius = sigma * 2.5
+    const cutoffSq = cutoffRadius * cutoffRadius
+    const twoSigmaSq = 2 * sigma * sigma
+    const strokePts = getGaussianStrokePoints(config)
 
-  for (let r = 0; r < GRID_ROWS; r++) {
-    const row = new Array<number>(GRID_COLS).fill(0)
-    for (let c = 0; c < GRID_COLS; c++) {
-      if (config.shape === 'box') {
-        if (r >= rMin && r <= rMax && c >= cMin && c <= cMax) {
-          row[c] = 1
-        }
-      } else {
+    for (let r = 0; r < GRID_ROWS; r++) {
+      for (let c = 0; c < GRID_COLS; c++) {
         let minD2 = Infinity
         for (let i = 0; i < strokePts.length; i++) {
           const dr = r - strokePts[i].row
@@ -188,12 +388,69 @@ export function computeSpatialWeights(config: ShockConfig): number[][] {
           if (d2 < minD2) minD2 = d2
         }
         if (minD2 <= cutoffSq) {
-          row[c] = Math.exp(-minD2 / twoSigmaSq)
+          weights[r][c] = Math.exp(-minD2 / twoSigmaSq)
         }
       }
     }
-    weights[r] = row
+  } else {
+    const coreMask: boolean[][] = Array.from({ length: GRID_ROWS }, (_, r) =>
+      Array.from(
+        { length: GRID_COLS },
+        (_, c) => r >= rMin && r <= rMax && c >= cMin && c <= cMax,
+      ),
+    )
+
+    const feather = Math.max(0, Math.min(3, config.edgeFeather ?? 0))
+    if (feather <= 0) {
+      for (let r = 0; r < GRID_ROWS; r++) {
+        for (let c = 0; c < GRID_COLS; c++) {
+          weights[r][c] = coreMask[r][c] ? 1 : 0
+        }
+      }
+    } else {
+      const coreCells: GridPoint[] = []
+      for (let r = 0; r < GRID_ROWS; r++) {
+        for (let c = 0; c < GRID_COLS; c++) {
+          if (coreMask[r][c]) {
+            coreCells.push({ row: r, col: c })
+            weights[r][c] = 1
+          }
+        }
+      }
+      if (coreCells.length > 0) {
+        const cutoffSq = (feather * 2.2) ** 2
+        const twoSigmaSq = 2 * feather * feather
+        for (let r = 0; r < GRID_ROWS; r++) {
+          for (let c = 0; c < GRID_COLS; c++) {
+            if (coreMask[r][c]) continue
+            let minD2 = Infinity
+            for (let i = 0; i < coreCells.length; i++) {
+              const dr = r - coreCells[i].row
+              const dc = c - coreCells[i].col
+              const d2 = dr * dr + dc * dc
+              if (d2 < minD2) minD2 = d2
+            }
+            if (minD2 <= cutoffSq) {
+              weights[r][c] = Math.exp(-minD2 / twoSigmaSq)
+            }
+          }
+        }
+      }
+    }
   }
+
+  const domainMask = config.domainMask ?? 'all'
+  if (domainMask !== 'all' && landSeaMask) {
+    for (let r = 0; r < GRID_ROWS; r++) {
+      for (let c = 0; c < GRID_COLS; c++) {
+        const isLand = (landSeaMask[r]?.[c] ?? 0) >= 0.5
+        if ((domainMask === 'land' && !isLand) || (domainMask === 'sea' && isLand)) {
+          weights[r][c] = 0
+        }
+      }
+    }
+  }
+
   return weights
 }
 
@@ -201,9 +458,13 @@ export function computeSpatialWeights(config: ShockConfig): number[][] {
  * Build a [6][32][36] array of physical deltas, strictly 0 outside the shock.
  * Percentage shocks use the last input day (init_states[2]) per cell.
  */
-export function buildPerturbation(config: ShockConfig, lastInputDay: State3D): State3D {
+export function buildPerturbation(
+  config: ShockConfig,
+  lastInputDay: State3D,
+  landSeaMask?: Grid2D | null,
+): State3D {
   setCachedLastInputDay(lastInputDay)
-  const weights = computeSpatialWeights(config)
+  const weights = computeSpatialWeights(config, landSeaMask)
   const out: State3D = new Array(NUM_CHANNELS)
 
   for (const ch of CHANNELS) {
@@ -252,7 +513,11 @@ export function buildZeroPerturbation(): State3D {
  * Extract a boolean [32][36] mask of cells belonging to the shock region.
  * Uses nonzero perturbation cells if present, otherwise falls back to the configured footprint.
  */
-export function getShockMask(perturbation: State3D | null, fallbackConfig?: ShockConfig): boolean[][] {
+export function getShockMask(
+  perturbation: State3D | null,
+  fallbackConfig?: ShockConfig,
+  landSeaMask?: Grid2D | null,
+): boolean[][] {
   if (perturbation === null && fallbackConfig === undefined) {
     setCachedLastInputDay(null)
   }
@@ -277,7 +542,7 @@ export function getShockMask(perturbation: State3D | null, fallbackConfig?: Shoc
   }
 
   if (!anyNonZero && fallbackConfig) {
-    const weights = computeSpatialWeights(fallbackConfig)
+    const weights = computeSpatialWeights(fallbackConfig, landSeaMask)
     for (let r = 0; r < GRID_ROWS; r++) {
       for (let c = 0; c < GRID_COLS; c++) {
         mask[r][c] = weights[r][c] > 0
@@ -315,8 +580,9 @@ export interface ShockFootprintPreview {
 export function computeShockPreview(
   config: ShockConfig,
   lastInputDay: State3D | null,
+  landSeaMask?: Grid2D | null,
 ): ShockFootprintPreview {
-  const weights = computeSpatialWeights(config)
+  const weights = computeSpatialWeights(config, landSeaMask)
   let activeCells = 0
   let effectiveCells = 0
 
@@ -560,6 +826,7 @@ export function applyDragToShock(
   const colMax = Math.max(c0, c1)
   return {
     ...config,
+    shape: 'box',
     boxRowMin: rowMin,
     boxRowMax: rowMax,
     boxColMin: colMin,

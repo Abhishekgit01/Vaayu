@@ -26,14 +26,19 @@ import {
 } from '../lib/constants'
 import {
   drawCanvasMapOverlays,
-  GRATICULE_LATS,
-  GRATICULE_LONS,
-  latToNormY,
-  lonToNormX,
   type ContourSegment,
   type WindArrow,
 } from '../lib/heatmap'
 import type { ShockConfig } from '../lib/shock'
+import {
+  DEFAULT_MAP_VIEWPORT,
+  getViewportBounds,
+  getViewportGraticuleTicks,
+  panViewportByNormDelta,
+  viewportNormToCell,
+  zoomViewportAtNorm,
+  type MapViewport,
+} from '../lib/viewport'
 import type { ViewFieldId } from '../lib/vorticity'
 import { WindFlowCanvas } from './WindFlowCanvas'
 
@@ -184,6 +189,8 @@ interface GridMapProps {
   localityRingSegments?: ContourSegment[]
   refRingSegments?: ContourSegment[]
   stepDayNumber?: number
+  viewport?: MapViewport
+  onViewportChange?: (next: MapViewport) => void
   allowShockPlacement?: boolean
   onShockClick?: (row: number, col: number) => void
   onShockDrag?: (startRow: number, startCol: number, endRow: number, endCol: number) => void
@@ -220,6 +227,8 @@ export function GridMap({
   localityRingSegments,
   refRingSegments,
   stepDayNumber,
+  viewport,
+  onViewportChange,
   allowShockPlacement = false,
   onShockClick,
   onShockDrag,
@@ -242,11 +251,23 @@ export function GridMap({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const dragStartRef = useRef<HoveredCell | null>(null)
   const didDragRef = useRef(false)
+  const panStartRef = useRef<{ clientX: number; clientY: number; viewport: MapViewport } | null>(null)
   const [localHover, setLocalHover] = useState<HoveredCell | null>(null)
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
   const [isPointerInside, setIsPointerInside] = useState(false)
+  const [isPanning, setIsPanning] = useState(false)
 
+  const activeViewport = viewport ?? DEFAULT_MAP_VIEWPORT
+  const viewportBounds = useMemo(() => getViewportBounds(activeViewport), [activeViewport])
+  const graticuleTicks = useMemo(
+    () => getViewportGraticuleTicks(viewportBounds),
+    [viewportBounds],
+  )
   const activeHover = hoveredCell !== undefined ? hoveredCell : localHover
+  const latestViewportRef = useRef(activeViewport)
+  latestViewportRef.current = activeViewport
+  const onViewportChangeRef = useRef(onViewportChange)
+  onViewportChangeRef.current = onViewportChange
 
   const paintCanvas = useCallback(() => {
     const canvas = displayCanvasRef.current
@@ -308,10 +329,16 @@ export function GridMap({
       }
     }
 
+    const buf = bufferCanvasRef.current
+    const sx = (viewportBounds.gxMin / GRID_COLS) * buf.width
+    const sy = (viewportBounds.gyMin / GRID_ROWS) * buf.height
+    const sw = (viewportBounds.spanGx / GRID_COLS) * buf.width
+    const sh = (viewportBounds.spanGy / GRID_ROWS) * buf.height
+
     ctx.save()
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(bufferCanvasRef.current, 0, 0, targetW, targetH)
+    ctx.drawImage(buf, sx, sy, sw, sh, 0, 0, targetW, targetH)
     ctx.restore()
 
     drawCanvasMapOverlays(ctx, {
@@ -319,6 +346,8 @@ export function GridMap({
       height: targetH,
       dpr,
       isLightBackground: scale.diverging,
+      viewportBounds,
+      landSeaMask,
       coastlineSegments,
       tpSegments: !isDifference && showTpThresholdOutline ? tpSegments : undefined,
       windArrows: !isDifference && showWindArrows ? windArrows : undefined,
@@ -352,6 +381,7 @@ export function GridMap({
     refRingSegments,
     stepDayNumber,
     activeHover,
+    viewportBounds,
   ])
 
   useEffect(() => {
@@ -368,6 +398,26 @@ export function GridMap({
     return () => observer.disconnect()
   }, [paintCanvas])
 
+  // Cursor-anchored scroll-wheel zoom (non-passive so wheel doesn't scroll the page)
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      const changeCb = onViewportChangeRef.current
+      if (!changeCb) return
+      e.preventDefault()
+      const rect = el.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+      const nx = (e.clientX - rect.left) / rect.width
+      const ny = (e.clientY - rect.top) / rect.height
+      const cur = latestViewportRef.current
+      const factor = e.deltaY < 0 ? 1.25 : 0.8
+      changeCb(zoomViewportAtNorm(cur, cur.zoom * factor, nx, ny))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
   // Snap pointer strictly to the nearest original 1-degree (32x36) grid cell
   const pointerToCell = (e: ReactPointerEvent<HTMLDivElement>): HoveredCell | null => {
     const el = containerRef.current
@@ -376,11 +426,7 @@ export function GridMap({
     if (rect.width <= 0 || rect.height <= 0) return null
     const nx = (e.clientX - rect.left) / rect.width
     const ny = (e.clientY - rect.top) / rect.height
-    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return null
-    const col = Math.max(0, Math.min(GRID_COLS - 1, Math.floor(nx * GRID_COLS)))
-    const visualY = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(ny * GRID_ROWS)))
-    const row = GRID_ROWS - 1 - visualY
-    return { row, col }
+    return viewportNormToCell(nx, ny, viewportBounds)
   }
 
   const updateHover = (cell: HoveredCell | null) => {
@@ -392,6 +438,19 @@ export function GridMap({
   }
 
   const handlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const isZoomed = activeViewport.zoom > 1.001
+    if (Boolean(onViewportChange) && isZoomed) {
+      e.preventDefault()
+      e.currentTarget.setPointerCapture(e.pointerId)
+      panStartRef.current = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        viewport: activeViewport,
+      }
+      setIsPanning(true)
+      return
+    }
+
     if (!allowShockPlacement) return
     const cell = pointerToCell(e)
     if (!cell) return
@@ -401,6 +460,16 @@ export function GridMap({
   }
 
   const handlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (panStartRef.current && onViewportChange && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0) {
+        const dnx = (e.clientX - panStartRef.current.clientX) / rect.width
+        const dny = (e.clientY - panStartRef.current.clientY) / rect.height
+        onViewportChange(panViewportByNormDelta(panStartRef.current.viewport, dnx, dny))
+      }
+      return
+    }
+
     const cell = pointerToCell(e)
     setIsPointerInside(true)
     if (containerRef.current) {
@@ -409,7 +478,7 @@ export function GridMap({
     }
     updateHover(cell)
 
-    if (allowShockPlacement && dragStartRef.current && cell) {
+    if (allowShockPlacement && activeViewport.zoom <= 1.001 && dragStartRef.current && cell) {
       const start = dragStartRef.current
       if (start.row !== cell.row || start.col !== cell.col) {
         didDragRef.current = true
@@ -419,6 +488,11 @@ export function GridMap({
   }
 
   const handlePointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (panStartRef.current) {
+      panStartRef.current = null
+      setIsPanning(false)
+      return
+    }
     if (!allowShockPlacement || !dragStartRef.current) return
     const cell = pointerToCell(e) ?? dragStartRef.current
     if (didDragRef.current) {
@@ -433,7 +507,7 @@ export function GridMap({
   const handlePointerLeave = () => {
     setIsPointerInside(false)
     setTooltipPos(null)
-    if (!dragStartRef.current) {
+    if (!dragStartRef.current && !panStartRef.current) {
       updateHover(null)
     }
   }
@@ -526,21 +600,18 @@ export function GridMap({
         )}
       </div>
 
-      {/* Map body with 5-degree Lat/Lon graticule labels in mono along edges (North Up: row 0 = south) */}
+      {/* Map body with dynamic Lat/Lon graticule labels in mono along edges (North Up: row 0 = south) */}
       <div className="grid grid-cols-[36px_1fr] gap-x-1.5">
         <div className="relative select-none">
-          {GRATICULE_LATS.map((lat) => {
-            const topPct = latToNormY(lat) * 100
-            return (
-              <span
-                key={lat}
-                style={{ top: `${topPct}%` }}
-                className="tabular-nums absolute right-0 -translate-y-1/2 font-mono text-[10px] text-[#5A645D]"
-              >
-                {lat}°N
-              </span>
-            )
-          })}
+          {graticuleTicks.lats.map((tick) => (
+            <span
+              key={tick.value}
+              style={{ top: `${tick.normPos * 100}%` }}
+              className="tabular-nums absolute right-0 -translate-y-1/2 font-mono text-[10px] text-[#5A645D]"
+            >
+              {tick.value}°N
+            </span>
+          ))}
         </div>
 
         <div
@@ -550,7 +621,13 @@ export function GridMap({
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerLeave}
           className={`relative aspect-[36/32] w-full overflow-hidden rounded-[2px] border border-[#26312B] bg-[#141B18] ${
-            allowShockPlacement ? 'cursor-crosshair select-none touch-none' : 'cursor-default'
+            isPanning
+              ? 'cursor-grabbing select-none touch-none'
+              : activeViewport.zoom > 1.001
+                ? 'cursor-grab select-none touch-none'
+                : allowShockPlacement
+                  ? 'cursor-crosshair select-none touch-none'
+                  : 'cursor-default'
           }`}
         >
           {grid ? (
@@ -559,6 +636,7 @@ export function GridMap({
               <WindFlowCanvas
                 active={windFlowEnabled && !isDifference}
                 primaryState={physicalState}
+                viewportBounds={viewportBounds}
               />
 
               {/* Small mono tooltip snapped to exact un-interpolated 1° grid cell */}
@@ -598,16 +676,16 @@ export function GridMap({
         <div />
 
         <div className="relative mt-1 h-4 select-none">
-          {GRATICULE_LONS.map((lon) => {
-            const leftPct = lonToNormX(lon) * 100
-            const alignClass = lon === 100 ? '-translate-x-[82%]' : '-translate-x-1/2'
+          {graticuleTicks.lons.map((tick) => {
+            const leftPct = tick.normPos * 100
+            const alignClass = leftPct > 92 ? '-translate-x-[82%]' : '-translate-x-1/2'
             return (
               <span
-                key={lon}
+                key={tick.value}
                 style={{ left: `${leftPct}%` }}
                 className={`tabular-nums absolute top-0 font-mono text-[10px] text-[#5A645D] ${alignClass}`}
               >
-                {lon}°E
+                {tick.value}°E
               </span>
             )
           })}

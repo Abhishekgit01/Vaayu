@@ -1,6 +1,11 @@
 import { useEffect, useRef } from 'react'
 import { GRID_COLS, GRID_ROWS, type State3D } from '../api/types'
 import {
+  DEFAULT_MAP_VIEWPORT,
+  getViewportBounds,
+  type ViewportBounds,
+} from '../lib/viewport'
+import {
   computeMaxWindSpeed,
   createInitialParticles,
   drawStaticWindStreamlines2D,
@@ -17,6 +22,7 @@ interface WindFlowCanvasProps {
   secondaryState?: State3D | null
   /** Optional split position in [0..1]; left uses primaryState, right uses secondaryState */
   splitRatio?: number
+  viewportBounds?: ViewportBounds
 }
 
 export function WindFlowCanvas({
@@ -24,6 +30,7 @@ export function WindFlowCanvas({
   primaryState,
   secondaryState,
   splitRatio,
+  viewportBounds,
 }: WindFlowCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const particlesRef = useRef<WindParticle[] | null>(null)
@@ -32,20 +39,24 @@ export function WindFlowCanvas({
     secondary: State3D | null | undefined
     splitRatio: number | undefined
     maxSpeed: number
+    viewportBounds: ViewportBounds
   }>({
     primary: primaryState,
     secondary: secondaryState,
     splitRatio,
     maxSpeed: 1,
+    viewportBounds: viewportBounds ?? getViewportBounds(DEFAULT_MAP_VIEWPORT),
   })
 
   const maxPrimary = computeMaxWindSpeed(primaryState)
   const maxSecondary = computeMaxWindSpeed(secondaryState)
+  const resolvedBounds = viewportBounds ?? getViewportBounds(DEFAULT_MAP_VIEWPORT)
   fieldsRef.current = {
     primary: primaryState,
     secondary: secondaryState,
     splitRatio,
     maxSpeed: Math.max(maxPrimary, maxSecondary),
+    viewportBounds: resolvedBounds,
   }
 
   useEffect(() => {
@@ -127,6 +138,7 @@ export function WindFlowCanvas({
       ctx.restore()
 
       const maxSpeed = fieldsRef.current.maxSpeed
+      const bounds = fieldsRef.current.viewportBounds
       // Velocity scaling in grid cells per second so moderate 10 m/s winds traverse ~2.4 cells/sec
       const advectScale = (2.8 / Math.max(6, maxSpeed)) * (dtSec * 60) * 0.08
 
@@ -140,7 +152,8 @@ export function WindFlowCanvas({
           respawnParticle(p)
         }
 
-        const state = getFieldAtNormX(p.gx / GRID_COLS)
+        const screenNx = (p.gx - bounds.gxMin) / bounds.spanGx
+        const state = getFieldAtNormX(screenNx)
         if (!state) {
           p.age += 2
           continue
@@ -168,8 +181,8 @@ export function WindFlowCanvas({
 
         ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`
         ctx.beginPath()
-        ctx.moveTo((p.gx / GRID_COLS) * w, (p.gy / GRID_ROWS) * h)
-        ctx.lineTo((nextGx / GRID_COLS) * w, (nextGy / GRID_ROWS) * h)
+        ctx.moveTo(((p.gx - bounds.gxMin) / bounds.spanGx) * w, ((p.gy - bounds.gyMin) / bounds.spanGy) * h)
+        ctx.lineTo(((nextGx - bounds.gxMin) / bounds.spanGx) * w, ((nextGy - bounds.gyMin) / bounds.spanGy) * h)
         ctx.stroke()
 
         p.gx = nextGx

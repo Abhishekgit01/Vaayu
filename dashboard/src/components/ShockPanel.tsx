@@ -5,8 +5,8 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { RotateCcw } from 'lucide-react'
-import { GRID_COLS, GRID_ROWS, type ChannelKey, type State3D } from '../api/types'
+import { ChevronDown, ChevronUp, RotateCcw } from 'lucide-react'
+import { GRID_COLS, GRID_ROWS, type ChannelKey, type Grid2D, type State3D } from '../api/types'
 import { CHANNELS, colToLon, rowToLat } from '../lib/constants'
 import {
   applyDragToShock,
@@ -14,14 +14,24 @@ import {
   createEmptyShockConfig,
   createWarmBayOfBengalPreset,
   createWeakerArabianSeaWindPreset,
+  EXTRA_SHOCK_PRESETS,
   getCachedLastInputDay,
   getGaussianStrokePoints,
   moveShockCenter,
   subscribeLastInputDay,
+  undoLastGaussianStroke,
   type AmplitudeMode,
+  type DomainMaskMode,
   type ShockConfig,
   type ShockShape,
 } from '../lib/shock'
+import {
+  clampMapViewport,
+  DEFAULT_MAP_VIEWPORT,
+  getViewportBounds,
+  getViewportGraticuleTicks,
+  viewportNormToCell,
+} from '../lib/viewport'
 
 interface ShockPanelProps {
   config: ShockConfig
@@ -31,6 +41,7 @@ interface ShockPanelProps {
   onRunZeroShock: () => void
   isSimulating: boolean
   hasPrime: boolean
+  landSeaMask?: Grid2D | null
 }
 
 export function ShockPanel({
@@ -41,8 +52,11 @@ export function ShockPanel({
   onRunZeroShock,
   isSimulating,
   hasPrime,
+  landSeaMask,
 }: ShockPanelProps) {
   const [lastInputDay, setLastInputDay] = useState<State3D | null>(() => getCachedLastInputDay())
+  const [previewZoom, setPreviewZoom] = useState<1 | 2>(1)
+  const [showMorePresets, setShowMorePresets] = useState(false)
 
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const previewBoxRef = useRef<HTMLDivElement | null>(null)
@@ -60,11 +74,22 @@ export function ShockPanel({
   const strokePoints = getGaussianStrokePoints(config)
 
   const preview = useMemo(
-    () => computeShockPreview(config, lastInputDay),
-    [config, lastInputDay],
+    () => computeShockPreview(config, lastInputDay, landSeaMask),
+    [config, lastInputDay, landSeaMask],
   )
 
-  // Live north-up 36x32 footprint preview canvas
+  const previewBounds = useMemo(() => {
+    if (previewZoom === 1) return getViewportBounds(DEFAULT_MAP_VIEWPORT)
+    return getViewportBounds(
+      clampMapViewport({
+        zoom: previewZoom,
+        centerGx: config.centerCol + 0.5,
+        centerGy: GRID_ROWS - 1 - config.centerRow + 0.5,
+      }),
+    )
+  }, [previewZoom, config.centerCol, config.centerRow])
+
+  // Live north-up 36x32 footprint preview canvas (respecting previewZoom)
   useEffect(() => {
     const canvas = previewCanvasRef.current
     if (!canvas) return
@@ -78,8 +103,10 @@ export function ShockPanel({
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    const cellW = w / GRID_COLS
-    const cellH = h / GRID_ROWS
+    const toX = (gx: number) => ((gx - previewBounds.gxMin) / previewBounds.spanGx) * w
+    const toY = (gy: number) => ((gy - previewBounds.gyMin) / previewBounds.spanGy) * h
+    const cellW = w / previewBounds.spanGx
+    const cellH = h / previewBounds.spanGy
 
     ctx.fillStyle = '#141B18'
     ctx.fillRect(0, 0, w, h)
@@ -88,27 +115,35 @@ export function ShockPanel({
       const vy = GRID_ROWS - 1 - r
       for (let c = 0; c < GRID_COLS; c++) {
         const weight = preview.weights[r][c]
-        if (weight <= 0) continue
+        const seaShade = landSeaMask && (landSeaMask[r]?.[c] ?? 1) < 0.5
+        if (weight <= 0) {
+          if (seaShade) {
+            ctx.fillStyle = 'rgba(8, 12, 11, 0.45)'
+            ctx.fillRect(toX(c), toY(vy), Math.ceil(cellW), Math.ceil(cellH))
+          }
+          continue
+        }
         // Interpolate surface #141B18 -> lightning #F0B84B
         const red = Math.round(20 + 220 * weight)
         const green = Math.round(27 + 157 * weight)
         const blue = Math.round(24 + 51 * weight)
         ctx.fillStyle = `rgb(${red}, ${green}, ${blue})`
-        ctx.fillRect(c * cellW, vy * cellH, Math.ceil(cellW), Math.ceil(cellH))
+        ctx.fillRect(toX(c), toY(vy), Math.ceil(cellW), Math.ceil(cellH))
       }
     }
 
     // Crisp 1px graticule lines
+    const ticks = getViewportGraticuleTicks(previewBounds)
     ctx.strokeStyle = 'rgba(90, 100, 93, 0.35)'
     ctx.lineWidth = 1 * dpr
     ctx.beginPath()
-    for (const lat of [10, 20, 30]) {
-      const y = Math.round(((38 - lat) / GRID_ROWS) * h) + 0.5
+    for (const latTick of ticks.lats) {
+      const y = Math.round(latTick.normPos * h) + 0.5
       ctx.moveTo(0, y)
       ctx.lineTo(w, y)
     }
-    for (const lon of [70, 80, 90, 100]) {
-      const x = Math.round(((lon - 65) / GRID_COLS) * w) + 0.5
+    for (const lonTick of ticks.lons) {
+      const x = Math.round(lonTick.normPos * w) + 0.5
       ctx.moveTo(x, 0)
       ctx.lineTo(x, h)
     }
@@ -119,16 +154,22 @@ export function ShockPanel({
       const rMax = Math.max(config.boxRowMin, config.boxRowMax)
       const cMin = Math.min(config.boxColMin, config.boxColMax)
       const cMax = Math.max(config.boxColMin, config.boxColMax)
+      const x = toX(cMin)
+      const y = toY(GRID_ROWS - 1 - rMax)
       ctx.strokeStyle = '#ECE7DA'
       ctx.lineWidth = 1.2 * dpr
-      ctx.strokeRect(
-        cMin * cellW,
-        (GRID_ROWS - 1 - rMax) * cellH,
-        (cMax - cMin + 1) * cellW,
-        (rMax - rMin + 1) * cellH,
-      )
+      ctx.strokeRect(x, y, toX(cMax + 1) - x, toY(GRID_ROWS - rMin) - y)
     }
-  }, [preview.weights, config.shape, config.boxRowMin, config.boxRowMax, config.boxColMin, config.boxColMax])
+  }, [
+    preview.weights,
+    previewBounds,
+    landSeaMask,
+    config.shape,
+    config.boxRowMin,
+    config.boxRowMax,
+    config.boxColMin,
+    config.boxColMax,
+  ])
 
   const boxHeight = Math.abs(config.boxRowMax - config.boxRowMin) + 1
   const boxWidth = Math.abs(config.boxColMax - config.boxColMin) + 1
@@ -155,6 +196,14 @@ export function ShockPanel({
           ? [{ row: midR, col: midC }]
           : config.gaussianStroke,
       strokeOrigin: null,
+      presetName: null,
+    })
+  }
+
+  const setDomainMask = (domainMask: DomainMaskMode) => {
+    onChange({
+      ...config,
+      domainMask,
       presetName: null,
     })
   }
@@ -204,9 +253,7 @@ export function ShockPanel({
     if (rect.width <= 0 || rect.height <= 0) return null
     const nx = Math.max(0, Math.min(0.9999, (e.clientX - rect.left) / rect.width))
     const ny = Math.max(0, Math.min(0.9999, (e.clientY - rect.top) / rect.height))
-    const col = Math.floor(nx * GRID_COLS)
-    const row = GRID_ROWS - 1 - Math.floor(ny * GRID_ROWS)
-    return { row, col }
+    return viewportNormToCell(nx, ny, previewBounds)
   }
 
   const handlePreviewPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -394,6 +441,39 @@ export function ShockPanel({
             </p>
           </button>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowMorePresets((v) => !v)}
+          className="ui-transition mt-2 flex w-full items-center justify-between text-xs text-[#7FB5B0] hover:underline cursor-pointer"
+        >
+          <span>More scenario presets ({EXTRA_SHOCK_PRESETS.length})</span>
+          {showMorePresets ? (
+            <ChevronUp className="h-3.5 w-3.5" strokeWidth={1.5} />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5" strokeWidth={1.5} />
+          )}
+        </button>
+
+        {showMorePresets && (
+          <div className="mt-2 grid gap-1.5">
+            {EXTRA_SHOCK_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => onChange(preset.create())}
+                className={`ui-transition rounded-[2px] border px-3 py-2 text-left cursor-pointer ${
+                  config.presetName === preset.title
+                    ? 'border-[#F0B84B] bg-[#1A231F] text-[#ECE7DA]'
+                    : 'border-[#26312B] bg-[#141B18] text-[#ECE7DA] hover:border-[#5A645D]'
+                }`}
+              >
+                <p className="text-xs font-medium">{preset.title}</p>
+                <p className="mt-0.5 font-mono text-[11px] text-[#8C958D]">{preset.detail}</p>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Footprint tool & live 32x36 preview */}
@@ -426,6 +506,28 @@ export function ShockPanel({
           </div>
         </div>
 
+        <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] text-[#8C958D]">
+          <span>Preview zoom</span>
+          <div className="inline-flex overflow-hidden rounded-[2px] border border-[#26312B]">
+            {([1, 2] as const).map((z) => (
+              <button
+                key={z}
+                type="button"
+                onClick={() => setPreviewZoom(z)}
+                className={`px-1.5 py-0.5 cursor-pointer ${
+                  z > 1 ? 'border-l border-[#26312B]' : ''
+                } ${
+                  previewZoom === z
+                    ? 'bg-[#1A231F] text-[#7FB5B0]'
+                    : 'bg-[#141B18] text-[#5A645D] hover:text-[#ECE7DA]'
+                }`}
+              >
+                {z}×
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div
           ref={previewBoxRef}
           onPointerDown={handlePreviewPointerDown}
@@ -435,7 +537,7 @@ export function ShockPanel({
         >
           <canvas ref={previewCanvasRef} className="block h-full w-full" />
           <span className="pointer-events-none absolute bottom-1 left-1.5 font-mono text-[9px] text-[#5A645D]">
-            6.5°N, 65.5°E
+            {(38 - previewBounds.gyMax).toFixed(0)}°N, {(65 + previewBounds.gxMin).toFixed(0)}°E
           </span>
           <span className="pointer-events-none absolute top-1 right-1.5 font-mono text-[9px] text-[#8C958D] tabular-nums">
             {preview.activeCells} / {GRID_ROWS * GRID_COLS} cells
@@ -514,25 +616,110 @@ export function ShockPanel({
                   : `${rowToLat(config.centerRow).toFixed(1)}°N, ${colToLon(config.centerCol).toFixed(1)}°E`}
               </span>
               {strokePoints.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    onChange(
-                      moveShockCenter(
-                        config,
-                        Math.round(config.centerRow),
-                        Math.round(config.centerCol),
-                      ),
-                    )
-                  }
-                  className="ui-transition text-[#7FB5B0] underline-offset-4 hover:underline cursor-pointer"
-                >
-                  Clear stroke
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => onChange(undoLastGaussianStroke(config))}
+                    className="ui-transition text-[#8C958D] underline-offset-4 hover:text-[#ECE7DA] hover:underline cursor-pointer"
+                  >
+                    Undo step
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onChange(
+                        moveShockCenter(
+                          config,
+                          Math.round(config.centerRow),
+                          Math.round(config.centerCol),
+                        ),
+                      )
+                    }
+                    className="ui-transition text-[#7FB5B0] underline-offset-4 hover:underline cursor-pointer"
+                  >
+                    Clear stroke
+                  </button>
+                </div>
               )}
             </div>
           </div>
         )}
+
+        {/* Edge feathering (box & region) + optional Land/Sea domain clip */}
+        <div className="mt-3 space-y-2.5 border-t border-[#26312B]/60 pt-2.5">
+          {config.shape !== 'gaussian' && (
+            <label className="block">
+              <div className="flex items-baseline justify-between text-xs">
+                <span className="text-[#8C958D]">Edge feather</span>
+                <span className="font-mono text-[#ECE7DA] tabular-nums">
+                  {(config.edgeFeather ?? 0) > 0
+                    ? `${(config.edgeFeather ?? 0).toFixed(1)} cells`
+                    : 'Hard edge'}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={3}
+                step={0.5}
+                value={config.edgeFeather ?? 0}
+                onChange={(e) =>
+                  onChange({
+                    ...config,
+                    edgeFeather: Number.parseFloat(e.target.value),
+                    presetName: null,
+                  })
+                }
+                className="instrument-range mt-1.5 w-full"
+              />
+            </label>
+          )}
+
+          <div className="flex items-center justify-between gap-2">
+            <span
+              className="text-xs text-[#8C958D]"
+              title={
+                landSeaMask
+                  ? 'Filter shock cells using imported land_sea_mask'
+                  : 'Import a .geojson file to clip shock to Land or Sea'
+              }
+            >
+              Domain clip
+            </span>
+            <div className="inline-flex overflow-hidden rounded-[2px] border border-[#26312B] font-mono text-[10px]">
+              {(['all', 'land', 'sea'] as const).map((mode, idx) => {
+                const disabled = mode !== 'all' && !landSeaMask
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setDomainMask(mode)}
+                    title={
+                      disabled
+                        ? 'Import a .geojson file first to filter by Land/Sea'
+                        : `Apply shock to ${mode} cells`
+                    }
+                    className={`ui-transition px-2 py-0.5 capitalize cursor-pointer disabled:opacity-35 ${
+                      idx > 0 ? 'border-l border-[#26312B]' : ''
+                    } ${
+                      (config.domainMask ?? 'all') === mode
+                        ? 'bg-[#F0B84B] font-medium text-[#0D1210]'
+                        : 'bg-[#141B18] text-[#8C958D] hover:text-[#ECE7DA]'
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          {!landSeaMask && (config.domainMask ?? 'all') === 'all' && (
+            <p className="font-mono text-[10px] text-[#5A645D]">
+              Import .geojson to enable Land/Sea clipping
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Channel amplitudes */}

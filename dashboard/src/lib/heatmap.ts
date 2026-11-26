@@ -29,6 +29,12 @@ import {
   VORTICITY_META,
   type ViewFieldId,
 } from './vorticity'
+import {
+  DEFAULT_MAP_VIEWPORT,
+  getViewportBounds,
+  getViewportGraticuleTicks,
+  type ViewportBounds,
+} from './viewport'
 import { buildDiffWindArrows } from './windFlow'
 
 /** 5-degree latitude parallels inside [6°N, 38°N] */
@@ -497,6 +503,8 @@ export interface CanvasOverlayOptions {
   height: number
   dpr: number
   isLightBackground?: boolean
+  viewportBounds?: ViewportBounds
+  landSeaMask?: Grid2D | null
   coastlineSegments?: ContourSegment[]
   tpSegments?: ContourSegment[]
   windArrows?: WindArrow[]
@@ -519,9 +527,11 @@ export function drawFieldVectorsAndContours(
   dpr: number,
   tpSegments?: ContourSegment[],
   windArrows?: WindArrow[],
+  viewportBounds?: ViewportBounds,
 ): void {
-  const toX = (gx: number) => (gx / GRID_COLS) * width
-  const toY = (gy: number) => (gy / GRID_ROWS) * height
+  const bounds = viewportBounds ?? getViewportBounds(DEFAULT_MAP_VIEWPORT)
+  const toX = (gx: number) => ((gx - bounds.gxMin) / bounds.spanGx) * width
+  const toY = (gy: number) => ((gy - bounds.gyMin) / bounds.spanGy) * height
 
   if (tpSegments && tpSegments.length > 0) {
     ctx.save()
@@ -637,6 +647,8 @@ export function drawCanvasMapOverlays(
     height,
     dpr,
     isLightBackground = false,
+    viewportBounds,
+    landSeaMask,
     coastlineSegments,
     tpSegments,
     windArrows,
@@ -651,23 +663,25 @@ export function drawCanvasMapOverlays(
     drawGraticule = true,
   } = opts
 
-  const toX = (gx: number) => (gx / GRID_COLS) * width
-  const toY = (gy: number) => (gy / GRID_ROWS) * height
+  const bounds = viewportBounds ?? getViewportBounds(DEFAULT_MAP_VIEWPORT)
+  const toX = (gx: number) => ((gx - bounds.gxMin) / bounds.spanGx) * width
+  const toY = (gy: number) => ((gy - bounds.gyMin) / bounds.spanGy) * height
 
-  // 1. Crisp 1px Lat/Lon graticule lines (5° grid, zero geographic outlines)
+  // 1. Crisp 1px Lat/Lon graticule lines (dynamic step when zoomed, zero geographic outlines)
   if (drawGraticule) {
+    const ticks = getViewportGraticuleTicks(bounds)
     ctx.save()
     ctx.strokeStyle = 'rgba(90, 100, 93, 0.36)'
     ctx.lineWidth = 1 * dpr
 
     ctx.beginPath()
-    for (const lat of GRATICULE_LATS) {
-      const y = Math.round(latToNormY(lat) * height) + 0.5
+    for (const latTick of ticks.lats) {
+      const y = Math.round(latTick.normPos * height) + 0.5
       ctx.moveTo(0, y)
       ctx.lineTo(width, y)
     }
-    for (const lon of GRATICULE_LONS) {
-      const x = Math.round(lonToNormX(lon) * width) + 0.5
+    for (const lonTick of ticks.lons) {
+      const x = Math.round(lonTick.normPos * width) + 0.5
       ctx.moveTo(x, 0)
       ctx.lineTo(x, height)
     }
@@ -678,15 +692,15 @@ export function drawCanvasMapOverlays(
     ctx.lineWidth = 1 * dpr
     const tickLen = 4 * dpr
     ctx.beginPath()
-    for (const lat of GRATICULE_LATS) {
-      const y = Math.round(latToNormY(lat) * height) + 0.5
+    for (const latTick of ticks.lats) {
+      const y = Math.round(latTick.normPos * height) + 0.5
       ctx.moveTo(0, y)
       ctx.lineTo(tickLen, y)
       ctx.moveTo(width - tickLen, y)
       ctx.lineTo(width, y)
     }
-    for (const lon of GRATICULE_LONS) {
-      const x = Math.round(lonToNormX(lon) * width) + 0.5
+    for (const lonTick of ticks.lons) {
+      const x = Math.round(lonTick.normPos * width) + 0.5
       ctx.moveTo(x, 0)
       ctx.lineTo(x, tickLen)
       ctx.moveTo(x, height - tickLen)
@@ -711,7 +725,7 @@ export function drawCanvasMapOverlays(
   }
 
   // 2. Field contours & wind vectors
-  drawFieldVectorsAndContours(ctx, width, height, dpr, tpSegments, windArrows)
+  drawFieldVectorsAndContours(ctx, width, height, dpr, tpSegments, windArrows, bounds)
 
   // 2b. Difference-mode (Branch − Prime) wind arrows
   if (diffWindArrows && diffWindArrows.length > 0) {
@@ -774,7 +788,11 @@ export function drawCanvasMapOverlays(
   // 4. Shock footprint outlined in solid lightning #F0B84B
   if (showShockOverlay && shockConfig) {
     ctx.save()
-    if (shockConfig.shape === 'box') {
+    const hasCustomClip =
+      (shockConfig.edgeFeather ?? 0) > 0 ||
+      ((shockConfig.domainMask ?? 'all') !== 'all' && Boolean(landSeaMask))
+
+    if (shockConfig.shape === 'box' && !hasCustomClip) {
       const cMin = Math.min(shockConfig.boxColMin, shockConfig.boxColMax)
       const cMax = Math.max(shockConfig.boxColMin, shockConfig.boxColMax)
       const rMin = Math.min(shockConfig.boxRowMin, shockConfig.boxRowMax)
@@ -782,8 +800,8 @@ export function drawCanvasMapOverlays(
 
       const x = toX(cMin)
       const y = toY(GRID_ROWS - 1 - rMax)
-      const w = toX(cMax - cMin + 1)
-      const h = toY(rMax - rMin + 1)
+      const w = toX(cMax + 1) - x
+      const h = toY(GRID_ROWS - rMin) - y
 
       ctx.strokeStyle = 'rgba(13, 18, 16, 0.78)'
       ctx.lineWidth = 2.8 * dpr
@@ -793,13 +811,14 @@ export function drawCanvasMapOverlays(
       ctx.lineWidth = 1.5 * dpr
       ctx.strokeRect(x, y, w, h)
     } else {
-      const weights = computeSpatialWeights(shockConfig)
+      const weights = computeSpatialWeights(shockConfig, landSeaMask)
       const weightField = buildNorthUpScalarVertexField(weights, CONTOUR_NX, CONTOUR_NY, false)
+      const coreLevel = shockConfig.shape === 'gaussian' ? Math.exp(-0.5) : 0.5
       const coreSegs = extractIsoContourSegments(
         weightField,
         CONTOUR_NX,
         CONTOUR_NY,
-        Math.exp(-0.5),
+        coreLevel,
       )
       const outerSegs = extractIsoContourSegments(weightField, CONTOUR_NX, CONTOUR_NY, 0.08)
 
@@ -855,10 +874,10 @@ export function drawCanvasMapOverlays(
 
   // 6. Hovered cell reticle
   if (hoveredCell) {
-    const cellW = width / GRID_COLS
-    const cellH = height / GRID_ROWS
-    const x = hoveredCell.col * cellW
-    const y = (GRID_ROWS - 1 - hoveredCell.row) * cellH
+    const cellW = width / bounds.spanGx
+    const cellH = height / bounds.spanGy
+    const x = toX(hoveredCell.col)
+    const y = toY(GRID_ROWS - 1 - hoveredCell.row)
 
     ctx.save()
     ctx.strokeStyle = 'rgba(13, 18, 16, 0.85)'
