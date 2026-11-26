@@ -1,188 +1,237 @@
-// Hand-authored ASCII frames for Monsoon Mascot characters.
-// Every string is a fixed-width block meant for a monospace <pre>.
+// Hand-authored & classic ASCII art frames for the Monsoon Mascot panorama.
+// Fixed-width lines designed for a single monospace <pre> (68x22).
+
+export const SCENE_WIDTH = 82
+export const SCENE_HEIGHT = 35
 
 /* ------------------------------------------------------------------ */
-/*  MEGH — the cloud with a face                                      */
+/*  MEGH — exact pasted blowing-rain cloud (27 lines)                 */
 /* ------------------------------------------------------------------ */
 
-// idle: eyes open
+const CLOUD_TOP: readonly string[] = [
+  '                                      ___    ,\'""""\'.                      ',
+  '                                    ,"""   """"\'      `.                   ',
+  '                                   ,\'        _.         `._                ',
+  '                                  ,\'       ,\'              `"""\'.          ',
+  '                                 ,\'    .-""`.    ,-\'            `.         ',
+  '                                ,\'    (        ,\'                :         ',
+  '                              ,\'     ,\'           __,            `.        ',
+  '                        ,""""\'     .\' ;-.    ,  ,\'  \\             `"""".   ',
+  '                      ,\'           `-(   `._(_,\'     )_                `.  ',
+]
+
+const CLOUD_BOT: readonly string[] = [
+  '             ;            ,\'        \\    _,\',\'                            `.',
+  '            ,\'            ;          `--\'  ,\'                              `.',
+  '           ,\'             ;          __    (                    ,           `.',
+  '           ;              `____...  `78b   `.                  ,\'           ,\'',
+  '           ;    ...----\'\'\'\' )  _.-  .d8P    `.                ,\'    ,\'    ,\'',
+  '_....----\'\'\' \'.        _..--"_.-:.-\' .\'        `.             ,\'\'.   ,\' `--\'',
+  '              `" mGk "" _.-"" .-\'`-.:..___...--\' `-._      ,-"\'   `-\'',
+  '        _.--\'       _.-\'    .\'   .\' .\'               `"""""',
+  '  __.-\'\'        _.-\'     .-\'   .\'  /',
+  ' \'          _.-\' .-\'  .-\'        .\'',
+  '        _.-\'  .-\'  .-\' .\'  .\'   /',
+  '    _.-\'      .-\'   .-\'  .\'   .\'',
+  '_.-\'       .-\'    .\'   .\'    /',
+  '       _.-\'    .-\'   .\'    .\'',
+  '    .-\'            .\'',
+]
+
 export const MEGH_IDLE: readonly string[] = [
-  '         .~~~~~~~~~~.',
-  '       .~            ~.',
-  '      (    °    °      )',
-  '     (       __         )',
-  '      (________________)',
-] as const
+  ...CLOUD_TOP,
+  '                     ,\'         ,---. \\ @ ;   \\ @ _,\'                   `. ',
+  '                ,-""\'         ,\'      ,--\'-    `;\'                       `.',
+  '               ,\'            ,\'      (      `. ,\'                          `.',
+  ...CLOUD_BOT,
+]
 
-// idle: blink
 export const MEGH_BLINK: readonly string[] = [
-  '         .~~~~~~~~~~.',
-  '       .~            ~.',
-  '      (    -    -      )',
-  '     (       __         )',
-  '      (________________)',
-] as const
+  ...CLOUD_TOP,
+  '                     ,\'         ,---. \\ - ;   \\ - _,\'                   `. ',
+  '                ,-""\'         ,\'      ,--\'-    `;\'                       `.',
+  '               ,\'            ,\'      (      `. ,\'                          `.',
+  ...CLOUD_BOT,
+]
 
-// sleepy: z Z floating up
-export const MEGH_SLEEPY: readonly string[][] = [
+export const MEGH_SLEEPY: readonly (readonly string[])[] = [
   [
-    '         .~~~~~~~~~~.    z',
-    '       .~            ~.',
-    '      (    -    -      )',
-    '     (       __         )',
-    '      (________________)',
+    '                                      ___    ,\'""""\'.      z               ',
+    ...CLOUD_TOP.slice(1),
+    '                     ,\'         ,---. \\ - ;   \\ - _,\'                   `. ',
+    '                ,-""\'         ,\'      ,--\'-    `;\'                       `.',
+    '               ,\'            ,\'      (      `. ,\'                          `.',
+    ...CLOUD_BOT,
   ],
   [
-    '         .~~~~~~~~~~.     Z',
-    '       .~            ~.',
-    '      (    -    -      )',
-    '     (       __         )',
-    '      (________________)',
+    '                                      ___    ,\'""""\'.       Z              ',
+    '                                    ,"""   """"\'      `.  z                ',
+    ...CLOUD_TOP.slice(2),
+    '                     ,\'         ,---. \\ - ;   \\ - _,\'                   `. ',
+    '                ,-""\'         ,\'      ,--\'-    `;\'                       `.',
+    '               ,\'            ,\'      (      `. ,\'                          `.',
+    ...CLOUD_BOT,
   ],
   [
-    '         .~~~~~~~~~~.      z',
-    '       .~            ~.',
-    '      (    -    -      )',
-    '     (       __         )',
-    '      (________________)',
+    '                                      ___    ,\'""""\'.        z             ',
+    '                                    ,"""   """"\'      `.   Z               ',
+    ...CLOUD_TOP.slice(2),
+    '                     ,\'         ,---. \\ - ;   \\ - _,\'                   `. ',
+    '                ,-""\'         ,\'      ,--\'-    `;\'                       `.',
+    '               ,\'            ,\'      (      `. ,\'                          `.',
+    ...CLOUD_BOT,
   ],
-] as const
+]
 
-// drag/mouth open wide
 export const MEGH_MOUTH_OPEN: readonly string[] = [
-  '         .~~~~~~~~~~.',
-  '       .~            ~.',
-  '      (    O    O      )',
-  '     (       ()         )',
-  '      (________________)',
-] as const
+  ...CLOUD_TOP,
+  '                     ,\'         ,---. \\ O ;   \\ O _,\'                   `. ',
+  '                ,-""\'         ,\'      ,--\'-    `;\'                       `.',
+  '               ,\'            ,\'      (  (O) `. ,\'                          `.',
+  ...CLOUD_BOT,
+]
 
-// thunder: shocked face
 export const MEGH_SHOCKED: readonly string[] = [
-  '         .~~~~~~~~~~.',
-  '       .~            ~.',
-  '      (    O    O      )',
-  '     (       OO         )',
-  '      (________________)',
-] as const
+  ...CLOUD_TOP,
+  '                     ,\'         ,---. \\ O ;   \\ O _,\'                   `. ',
+  '                ,-""\'         ,\'      ,--\'-    `;\'                       `.',
+  '               ,\'            ,\'      (  O_O `. ,\'                          `.',
+  ...CLOUD_BOT,
+]
 
 /* ------------------------------------------------------------------ */
-/*  RAIN FRAMES — cycle these under the cloud                         */
+/*  RAIN & LIGHTNING — 4 lines under Megh                             */
 /* ------------------------------------------------------------------ */
 
-export const RAIN_FRAMES: readonly string[][] = [
+export const RAIN_FRAMES: readonly (readonly string[])[] = [
   [
-    "   ,   '    ,    '   ,",
-    "  '   ,    '    ,   ' ",
-    "    ,    '   ,    '   ",
+    "    '   ,    '   ,    '   ,  ",
+    "   ,   '   ,    '   ,    '   ",
+    "    .    '   .    '   .    ' ",
+    "   '   .   '    .   '    .   ",
   ],
   [
-    "  '    ,   '    ,   ' ",
-    "    ,    '   ,    '   ",
-    "   ,   '    ,    '   ,",
+    "   ,   '   ,    '   ,    '   ",
+    "    .    '   .    '   .    ' ",
+    "   '   .   '    .   '    .   ",
+    "    '   ,    '   ,    '   ,  ",
   ],
   [
-    "    ,    '   ,    '   ",
-    "   ,   '    ,    '   ,",
-    "  '    ,   '    ,   ' ",
+    "    .    '   .    '   .    ' ",
+    "   '   .   '    .   '    .   ",
+    "    '   ,    '   ,    '   ,  ",
+    "   ,   '   ,    '   ,    '   ",
   ],
-] as const
+]
 
-// heavier rain (during drag)
-export const RAIN_HEAVY_FRAMES: readonly string[][] = [
+export const RAIN_HEAVY_FRAMES: readonly (readonly string[])[] = [
   [
-    "  , ' , ' , ' , ' , ' ",
-    " ' , ' , ' , ' , ' ,  ",
-    "  , ' , ' , ' , ' , ' ",
+    '   /  /   /  /   /  /   /  / ',
+    '  /  /   /  /   /  /   /  /  ',
+    '   /  /   /  /   /  /   /  / ',
+    '  /  /   /  /   /  /   /  /  ',
   ],
   [
-    " ' , ' , ' , ' , ' ,  ",
-    "  , ' , ' , ' , ' , ' ",
-    " ' , ' , ' , ' , ' ,  ",
+    '  /  /   /  /   /  /   /  /  ',
+    '   /  /   /  /   /  /   /  / ',
+    '  /  /   /  /   /  /   /  /  ',
+    '   /  /   /  /   /  /   /  / ',
   ],
-] as const
-
-/* ------------------------------------------------------------------ */
-/*  LIGHTNING — 3-frame zigzag bolt                                   */
-/* ------------------------------------------------------------------ */
-
-export const LIGHTNING_FRAMES: readonly string[] = [
-  '          \\            ',
-  '           \\\\          ',
-  '            /          ',
-] as const
-
-export const LIGHTNING_FRAMES_2: readonly string[] = [
-  '           \\           ',
-  '          //           ',
-  '          /            ',
-] as const
-
-export const LIGHTNING_FRAMES_3: readonly string[] = [
-  '            \\          ',
-  '           //          ',
-  '            \\\\         ',
-] as const
+]
 
 export const ALL_LIGHTNING: readonly (readonly string[])[] = [
-  LIGHTNING_FRAMES,
-  LIGHTNING_FRAMES_2,
-  LIGHTNING_FRAMES_3,
-] as const
-
-/* ------------------------------------------------------------------ */
-/*  UMBRELLA PERSON — walks along ridge, 2 walking frames             */
-/* ------------------------------------------------------------------ */
-
-export const UMBRELLA_WALK: readonly string[][] = [
   [
-    '   _____  ',
-    '  / ___ \\ ',
-    ' /  | |  \\',
-    '    |    ',
-    '   / \\   ',
+    '            \\ \\              ',
+    '             \\ \\             ',
+    '             / /             ',
+    '            /                ',
   ],
   [
-    '   _____  ',
-    '  / ___ \\ ',
-    ' /  | |  \\',
-    '    |    ',
-    '   / |   ',
+    '             \\ \\             ',
+    '            / /              ',
+    '             \\ \\             ',
+    '              \\              ',
   ],
-] as const
+  [
+    '              / /            ',
+    '             / /             ',
+    '              \\ \\            ',
+    '               \\             ',
+  ],
+]
+
+/* ------------------------------------------------------------------ */
+/*  UMBRELLA PERSON — 5 lines + 1 splash line                         */
+/* ------------------------------------------------------------------ */
+
+export const UMBRELLA_WALK: readonly (readonly string[])[] = [
+  [
+    '   .-----.  ',
+    '  /_______\\ ',
+    '     \\  O   ',
+    '      \\/|\\  ',
+    '       / \\  ',
+  ],
+  [
+    '   .-----.  ',
+    '  /_______\\ ',
+    '     \\  O   ',
+    '      \\/|\\  ',
+    '       /|   ',
+  ],
+]
 
 export const UMBRELLA_SPLASH: readonly string[] = [
-  '. o .  ',
-  '  ` `  ',
-] as const
+  '  . o . o   ',
+  '  o . o .   ',
+]
 
 /* ------------------------------------------------------------------ */
-/*  FROG — tiny 2-line frog with ribbit bubble                        */
+/*  PEACOCK — original dancing peacock (6 lines)                      */
 /* ------------------------------------------------------------------ */
 
-export const FROG_SIT: readonly string[] = [
-  ' @..@ ',
-  '(----)  ~',
-] as const
+export const PEACOCK_DANCE: readonly (readonly string[])[] = [
+  [
+    '      . * .     ',
+    '   * \\ | / *    ',
+    '  * --\\|/-- *   ',
+    '  o>   |   *    ',
+    ' /|____|__/     ',
+    '   /  \\         ',
+  ],
+  [
+    '      o * o     ',
+    '   o \\ | / o    ',
+    '  * --\\|/-- *   ',
+    '  o>   |   o    ',
+    ' /|____|__/     ',
+    '   \\  /         ',
+  ],
+]
 
-export const FROG_HOP: readonly string[] = [
-  '  @..@  ',
-  ' (----) ',
-] as const
-
-export const FROG_RIBBIT: readonly string[] = [
-  ' @..@ ',
-  '(----) ~ribbit',
-] as const
+export const PEACOCK_REST: readonly string[] = [
+  '                ',
+  '                ',
+  '    .           ',
+  '  o> \\___       ',
+  ' /|______\\      ',
+  '   /  \\         ',
+]
 
 /* ------------------------------------------------------------------ */
-/*  COMPOSITE HELPER: total scene height constants                    */
+/*  SMALL MONSOON FRIENDS — duck, frog, snail                         */
 /* ------------------------------------------------------------------ */
 
-export const MEGH_HEIGHT = MEGH_IDLE.length          // 5
-export const RAIN_HEIGHT = RAIN_FRAMES[0].length     // 3
-export const PERSON_HEIGHT = UMBRELLA_WALK[0].length  // 5
-export const FROG_HEIGHT = FROG_SIT.length            // 2
+export const DUCK_SWIM: readonly (readonly string[])[] = [
+  ['    _      ', '  >(.)__   ', ' ~ (___/ ~ '],
+  ['    _      ', '  >(.)__   ', '~  (___/  ~'],
+]
 
-export const SCENE_WIDTH = 50   // character columns for the full scene
-export const SCENE_HEIGHT = MEGH_HEIGHT + RAIN_HEIGHT + 2 + PERSON_HEIGHT + FROG_HEIGHT  // ~17 lines
+export const FROG_SIT: readonly string[] = [' @..@      ', '(----)  ~  ']
+
+export const FROG_RIBBIT: readonly string[] = [' @..@ ~ribbit!', '( \\/ )        ']
+
+export const SNAIL_FRAMES: readonly (readonly string[])[] = [
+  ["  _@'/ ", ' /(_(  '],
+  ["  _@'/ ", ' \\(_(  '],
+]

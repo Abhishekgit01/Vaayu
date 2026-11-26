@@ -1,29 +1,54 @@
 import { useEffect, useRef } from 'react'
 import type { HealthState } from './StatusBar'
 import {
-  MEGH_IDLE, MEGH_BLINK, MEGH_SLEEPY,
-  MEGH_MOUTH_OPEN, MEGH_SHOCKED,
-  RAIN_FRAMES, RAIN_HEAVY_FRAMES,
   ALL_LIGHTNING,
-  UMBRELLA_WALK, UMBRELLA_SPLASH,
-  FROG_SIT, FROG_RIBBIT,
+  DUCK_SWIM,
+  FROG_RIBBIT,
+  FROG_SIT,
+  MEGH_BLINK,
+  MEGH_IDLE,
+  MEGH_MOUTH_OPEN,
+  MEGH_SHOCKED,
+  MEGH_SLEEPY,
+  PEACOCK_DANCE,
+  PEACOCK_REST,
+  RAIN_FRAMES,
+  RAIN_HEAVY_FRAMES,
+  SCENE_HEIGHT,
   SCENE_WIDTH,
+  SNAIL_FRAMES,
+  UMBRELLA_SPLASH,
+  UMBRELLA_WALK,
 } from './mascotFrames'
 
-// ---- timing constants ----
-const TICK_MS         = 100
-const SINE_PERIOD     = 6000
-const BLINK_INTERVAL  = 3000
-const BLINK_DURATION  = 300
-const THUNDER_TOTAL   = 900
-const FROG_MIN_MS     = 8000
-const FROG_MAX_MS     = 12000
-const FROG_SHOW_DUR   = 3200
-const PERSON_STEP_MS  = 400
-const PERSON_COLS     = 40
+const TICK_MS = 100
+const SINE_PERIOD_MS = 6000
+const BLINK_INTERVAL_MS = 3200
+const BLINK_DURATION_MS = 280
+const THUNDER_TOTAL_MS = 900
+const FROG_MIN_MS = 8000
+const FROG_MAX_MS = 12000
+const FROG_SHOW_MS = 3200
+const PERSON_STEP_MS = 380
+const PERSON_MAX_COL = 24
 
-function randBetween(a: number, b: number) {
-  return a + Math.random() * (b - a)
+function randBetween(min: number, max: number) {
+  return min + Math.random() * (max - min)
+}
+
+/** Overlay `sprite` onto `canvas` starting at (row, col), skipping spaces so sprites compose cleanly. */
+function blit(canvas: string[][], sprite: readonly string[], row: number, col: number) {
+  for (let r = 0; r < sprite.length; r++) {
+    const targetRow = canvas[row + r]
+    if (!targetRow) continue
+    const line = sprite[r]
+    for (let c = 0; c < line.length; c++) {
+      const ch = line[c]
+      if (ch !== ' ' && col + c >= 0 && col + c < SCENE_WIDTH) {
+        targetRow[col + c] = ch
+      }
+    }
+  }
 }
 
 interface MonsoonMascotProps {
@@ -40,34 +65,37 @@ export function MonsoonMascot({ health, isDragging }: MonsoonMascotProps) {
     const pre = preRef.current
     if (!pre) return
 
-    // prefers-reduced-motion → single static frame, no timer
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-      pre.textContent = MEGH_IDLE.map(l => l.padEnd(SCENE_WIDTH)).join('\n')
+      const rows = Array.from({ length: SCENE_HEIGHT }, () => Array(SCENE_WIDTH).fill(' '))
+      blit(rows, MEGH_IDLE, 0, 2)
+      blit(rows, PEACOCK_REST, 28, 64)
+      pre.textContent = rows.map((r) => r.join('')).join('\n')
       return
     }
 
-    // ---- mutable state ----
     let tick = 0
     let blinkUntil = 0
-    let nextBlink = Date.now() + BLINK_INTERVAL
+    let nextBlink = Date.now() + BLINK_INTERVAL_MS
 
     let thunderOn = false
     let thunderStart = 0
     let wakeFlashDone = false
     let prevReady = propsRef.current.health.kind === 'ready'
 
-    let personCol = 0
+    let personCol = 2
     let personFrame = 0
     let lastPersonStep = Date.now()
 
     let frogShow = false
+    let frogHopping = false
     let frogStart = 0
-    let frogCol = 10
+    let frogCol = 22
     let nextFrog = Date.now() + randBetween(FROG_MIN_MS, FROG_MAX_MS)
 
+    let snailCol = 43
     let stopped = false
 
-    function frame() {
+    const frame = () => {
       if (stopped || document.hidden) return
       const now = Date.now()
       tick++
@@ -75,49 +103,52 @@ export function MonsoonMascot({ health, isDragging }: MonsoonMascotProps) {
       const { health: hp, isDragging: drag } = propsRef.current
       const ready = hp.kind === 'ready'
 
-      // ---- blink ----
       if (ready && !thunderOn && now >= nextBlink && now > blinkUntil) {
-        blinkUntil = now + BLINK_DURATION
-        nextBlink = now + BLINK_INTERVAL + randBetween(-500, 500)
+        blinkUntil = now + BLINK_DURATION_MS
+        nextBlink = now + BLINK_INTERVAL_MS + randBetween(-500, 500)
       }
       const isBlinking = now < blinkUntil
 
-      // ---- wake-up thunder ----
       if (ready && !prevReady && !wakeFlashDone) {
         thunderOn = true
         thunderStart = now
         wakeFlashDone = true
       }
-      if (thunderOn && now - thunderStart >= THUNDER_TOTAL) thunderOn = false
+      if (thunderOn && now - thunderStart >= THUNDER_TOTAL_MS) thunderOn = false
       prevReady = ready
 
-      // ---- person ----
       if (ready && now - lastPersonStep > PERSON_STEP_MS) {
         lastPersonStep = now
-        personCol = (personCol + 1) % PERSON_COLS
+        personCol = (personCol + 1) % PERSON_MAX_COL
         personFrame = (personFrame + 1) % UMBRELLA_WALK.length
       }
 
-      // ---- frog ----
+      if (ready && tick % 18 === 0) {
+        snailCol = snailCol <= 40 ? 44 : snailCol - 1
+      }
+
       if (ready && !frogShow && now >= nextFrog) {
         frogShow = true
+        frogHopping = true
         frogStart = now
-        frogCol = 5 + Math.floor(Math.random() * 30)
+        frogCol = 18 + Math.floor(Math.random() * 8)
       }
-      if (frogShow && now - frogStart > FROG_SHOW_DUR) {
-        frogShow = false
-        nextFrog = now + randBetween(FROG_MIN_MS, FROG_MAX_MS)
+      if (frogShow) {
+        const elapsed = now - frogStart
+        frogHopping = elapsed < 1000
+        if (elapsed > FROG_SHOW_MS) {
+          frogShow = false
+          nextFrog = now + randBetween(FROG_MIN_MS, FROG_MAX_MS)
+        }
       }
 
-      // ---- compose ----
-      const lines: string[] = []
-      const drift = Math.round(Math.sin((now / SINE_PERIOD) * Math.PI * 2) * 3)
-      const pad = (s: string) => ' '.repeat(Math.max(0, drift + 4)) + s
+      const buf = Array.from({ length: SCENE_HEIGHT }, () => Array<string>(SCENE_WIDTH).fill(' '))
+      const cloudCol = 2 + Math.round(Math.sin((now / SINE_PERIOD_MS) * Math.PI * 2) * 2)
 
-      // cloud face
+      // 1. Exact pasted Megh cloud (rows 0..26)
       let face: readonly string[]
       if (!ready) {
-        face = MEGH_SLEEPY[Math.floor((tick / 10) % MEGH_SLEEPY.length)]
+        face = MEGH_SLEEPY[Math.floor((tick / 8) % MEGH_SLEEPY.length)]
       } else if (thunderOn) {
         face = MEGH_SHOCKED
       } else if (drag) {
@@ -127,47 +158,52 @@ export function MonsoonMascot({ health, isDragging }: MonsoonMascotProps) {
       } else {
         face = MEGH_IDLE
       }
-      for (const l of face) lines.push(pad(l))
+      blit(buf, face, 0, cloudCol)
 
-      // rain / lightning / blank
+      // 2. Rain or 3-frame lightning under Megh (rows 19..22)
       let hasLightning = false
       if (ready && thunderOn) {
         const fi = Math.min(2, Math.floor((now - thunderStart) / 300))
-        for (const l of ALL_LIGHTNING[fi]) lines.push(pad(l))
+        blit(buf, ALL_LIGHTNING[fi], 19, cloudCol + 26)
         hasLightning = true
       } else if (ready) {
-        const src = drag ? RAIN_HEAVY_FRAMES : RAIN_FRAMES
-        for (const l of src[tick % src.length]) lines.push(pad(l))
-      } else {
-        lines.push('', '', '')
+        const rainSrc = drag ? RAIN_HEAVY_FRAMES : RAIN_FRAMES
+        blit(buf, rainSrc[tick % rainSrc.length], 19, cloudCol + 34)
       }
 
-      lines.push('')
-
-      // umbrella person
+      // 3. Ground flora/animals (rows 28..34)
       if (ready) {
-        for (const l of UMBRELLA_WALK[personFrame])
-          lines.push(' '.repeat(personCol) + l)
-        for (const l of UMBRELLA_SPLASH)
-          lines.push(' '.repeat(personCol) + l)
+        blit(buf, UMBRELLA_WALK[personFrame], 28, personCol)
+        blit(buf, [UMBRELLA_SPLASH[tick % UMBRELLA_SPLASH.length]], 33, personCol)
+
+        const duckFrame = DUCK_SWIM[Math.floor(tick / 6) % DUCK_SWIM.length]
+        blit(buf, duckFrame, 31, 38)
+
+        blit(buf, SNAIL_FRAMES[Math.floor(tick / 9) % SNAIL_FRAMES.length], 32, snailCol + 8)
+
+        const peacockFrame = PEACOCK_DANCE[Math.floor(tick / 5) % PEACOCK_DANCE.length]
+        blit(buf, peacockFrame, 28, 64)
+
+        if (frogShow) {
+          const frogRow = frogHopping ? 31 : 32
+          const frogSprite = now - frogStart > FROG_SHOW_MS * 0.45 ? FROG_RIBBIT : FROG_SIT
+          blit(buf, frogSprite, frogRow, frogCol + 6)
+        }
       } else {
-        for (let i = 0; i < 7; i++) lines.push('')
+        blit(buf, PEACOCK_REST, 28, 64)
       }
 
-      // frog
-      if (frogShow) {
-        const fFr = (now - frogStart > FROG_SHOW_DUR * 0.5) ? FROG_RIBBIT : FROG_SIT
-        for (const l of fFr) lines.push(' '.repeat(frogCol) + l)
-      } else {
-        lines.push('', '')
-      }
+      // Subtle wet ridge floor (row 34)
+      const floor = '  ..---..___..---..~~~~~~..---..___..---..___..---..___..---..___..---..      '
+      blit(buf, [floor], 34, 0)
 
-      pre.textContent = lines.map(l => l.padEnd(SCENE_WIDTH)).join('\n')
-      if (hasLightning) pre.classList.add('mascot-flash')
-      else pre.classList.remove('mascot-flash')
+      pre.textContent = buf.map((r) => r.join('')).join('\n')
+      pre.classList.toggle('mascot-flash', hasLightning)
     }
 
-    const onVis = () => { if (!document.hidden) nextBlink = Date.now() + BLINK_INTERVAL }
+    const onVis = () => {
+      if (!document.hidden) nextBlink = Date.now() + BLINK_INTERVAL_MS
+    }
     document.addEventListener('visibilitychange', onVis)
     const id = setInterval(frame, TICK_MS)
     frame()
@@ -182,31 +218,19 @@ export function MonsoonMascot({ health, isDragging }: MonsoonMascotProps) {
   return (
     <>
       <style>{`
-        .mascot-flash { text-shadow: 0 0 8px rgba(240,184,75,0.7); }
+        .mascot-flash { color: rgba(240, 184, 75, 0.88) !important; text-shadow: 0 0 10px rgba(240, 184, 75, 0.65); }
         @media (max-width: 900px) { .monsoon-mascot-wrap { display: none !important; } }
       `}</style>
       <div
-        className="monsoon-mascot-wrap"
+        className="monsoon-mascot-wrap pointer-events-none absolute right-[3%] top-[56%] z-[5] -translate-y-1/2 select-none"
         aria-hidden="true"
-        style={{
-          position: 'absolute',
-          right: '5%',
-          top: '50%',
-          transform: 'translateY(-50%)',
-          pointerEvents: 'none',
-          zIndex: 5,
-        }}
       >
         <pre
           ref={preRef}
+          className="m-0 whitespace-pre font-mono leading-[1.15]"
           style={{
-            fontFamily: "'Geist Mono','Courier New',ui-monospace,monospace",
-            fontSize: 13,
-            lineHeight: 1.3,
-            color: 'rgba(127,181,176,0.7)',
-            margin: 0,
-            whiteSpace: 'pre',
-            userSelect: 'none',
+            fontSize: 'clamp(8px, 0.72vw, 11px)',
+            color: 'rgba(127, 181, 176, 0.72)',
           }}
         />
       </div>
