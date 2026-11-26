@@ -870,7 +870,7 @@ function MiniWetBulbHeatmap({
                     </span>
                   </div>
                   <div className="mt-0.5 text-[#ECE7DA]">
-                    Wet_Bulb_Eq: {hoverDetails.wb.toFixed(1)} K ({hoverDetails.wbCelsius.toFixed(1)}°C)
+                    HHSI: {hoverDetails.wb.toFixed(1)} K ({hoverDetails.wbCelsius.toFixed(1)}°C)
                   </div>
                   {hoverDetails.t2m !== undefined && hoverDetails.tcwv !== undefined && (
                     <div className="text-[#8C958D]">
@@ -1350,7 +1350,7 @@ export function ImpactPanel({
                   </span>{' '}
                   of {TOTAL_GRID_CELLS.toLocaleString()} (
                   {wetBulbHeadline.severeDangerPct.toFixed(1)}% of{' '}
-                  {(TOTAL_DOMAIN_SQ_KM / 1_000_000).toFixed(2)}M sq km · peak Wet_Bulb_Eq{' '}
+                  {(TOTAL_DOMAIN_SQ_KM / 1_000_000).toFixed(2)}M sq km · peak HHSI{' '}
                   {wetBulbHeadline.maxWetBulbK.toFixed(1)} K /{' '}
                   {(wetBulbHeadline.maxWetBulbK - 273.15).toFixed(1)}°C)
                 </>
