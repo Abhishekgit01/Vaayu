@@ -230,3 +230,88 @@ def test_wrong_shapes_return_error_and_server_survives(server_url: str):
     )
     assert status == 200
     _assert_valid_rollout(np.asarray(body["rollout"], dtype=np.float32), expected_steps=2)
+
+
+def _post_raw(url: str, raw: bytes, timeout: float = 10.0) -> int:
+    req = urllib.request.Request(
+        url,
+        data=raw,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+
+
+def test_robustness_bad_inputs_and_recovery(server_url: str):
+    init_states = _make_synthetic_init_states(seed=55)
+    doy_sc = _doy_sincos(170)
+
+    # 1. Empty body -> 400
+    assert _post_raw(f"{server_url}/simulate", b"") == 400
+
+    # 2. Bad JSON -> 400
+    assert _post_raw(f"{server_url}/simulate", b"{not valid json") == 400
+
+    # 3. NaN in payload -> 422
+    nan_body = json.dumps({
+        "init_states": init_states.tolist(),
+        "doy_sincos": [0.5, 0.5],
+        "steps": 2,
+        "perturbation": None,
+    }).replace("[0.5, 0.5]", "[NaN, 0.5]", 1).encode("utf-8")
+    assert _post_raw(f"{server_url}/simulate", nan_body) == 422
+
+    # 4. Wrong shape -> 422
+    wrong_shape = json.dumps({
+        "init_states": init_states[:2].tolist(),
+        "doy_sincos": doy_sc,
+        "steps": 2,
+        "perturbation": None,
+    }).encode("utf-8")
+    assert _post_raw(f"{server_url}/simulate", wrong_shape) == 422
+
+    # 5. Out-of-range physical state (e.g. t2m = 999 K) -> 422
+    bad_state = init_states.copy()
+    bad_state[0, 0, 0, 0] = 999.0
+    assert _post_raw(
+        f"{server_url}/simulate",
+        json.dumps({"init_states": bad_state.tolist(), "doy_sincos": doy_sc, "steps": 2, "perturbation": None}).encode("utf-8"),
+    ) == 422
+
+    # 6. Huge shock (+1e4 K) -> 422
+    huge_pert = np.zeros((N_CHANNELS, NLAT, NLON), dtype=np.float32)
+    huge_pert[0, 0, 0] = 1e4
+    assert _post_raw(
+        f"{server_url}/simulate",
+        json.dumps({"init_states": init_states.tolist(), "doy_sincos": doy_sc, "steps": 2, "perturbation": huge_pert.tolist()}).encode("utf-8"),
+    ) == 422
+
+    # 7. Valid request immediately afterwards still succeeds, plus determinism & byte-identical zero shock
+    status1, body1 = _post_json(
+        f"{server_url}/simulate",
+        {"init_states": init_states.tolist(), "doy_sincos": doy_sc, "steps": 5, "perturbation": None},
+    )
+    status2, body2 = _post_json(
+        f"{server_url}/simulate",
+        {"init_states": init_states.tolist(), "doy_sincos": doy_sc, "steps": 5, "perturbation": None},
+    )
+    status_z, body_z = _post_json(
+        f"{server_url}/simulate",
+        {
+            "init_states": init_states.tolist(),
+            "doy_sincos": doy_sc,
+            "steps": 5,
+            "perturbation": np.zeros((N_CHANNELS, NLAT, NLON), dtype=np.float32).tolist(),
+        },
+    )
+    assert status1 == 200 and status2 == 200 and status_z == 200
+    r1 = np.asarray(body1["rollout"], dtype=np.float32)
+    r2 = np.asarray(body2["rollout"], dtype=np.float32)
+    rz = np.asarray(body_z["rollout"], dtype=np.float32)
+    _assert_valid_rollout(r1, 5)
+    assert np.array_equal(r1, r2)
+    assert np.array_equal(r1, rz)
