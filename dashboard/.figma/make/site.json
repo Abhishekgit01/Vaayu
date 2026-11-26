@@ -1,0 +1,10 @@
+{
+  "description": "Explore India climate forecasts with interactive maps, shock scenarios, spread analysis, and heatwave risk comparisons for climate researchers and planners.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
