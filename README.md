@@ -8,7 +8,7 @@
 
 ## 🌍 Overview
 
-**Vaayu** is an offline-first Earth-System Digital Twin built for **Track 2: Multiverse of Monsoon**, performing autoregressive spatiotemporal emulation of India's daily atmosphere on a `32 × 36` (`1° × 1°`, `lat 6.5..37.5`, `lon 65.5..100.5`) domain across 6 physical state variables (`t2m`, `tp`, `u10`, `v10`, `msl`, `tcwv`). Engineered for constrained CPU runtimes, Vaayu executes 10+ day deterministic rollouts and causal perturbation propagation experiments (such as localized Bay of Bengal warming or Arabian Sea wind stalls) in ~300 ms per call.
+**Vaayu** is an offline-first Earth-System Digital Twin built for **Track 2: Multiverse of Monsoon**, performing autoregressive spatiotemporal emulation of India's daily atmosphere on a `32 × 36` (`1° × 1°`, `lat 6.5..37.5`, `lon 65.5..100.5`) domain across 6 physical state variables (`t2m`, `tp`, `u10`, `v10`, `msl`, `tcwv`). Engineered for constrained CPU runtimes, Vaayu executes 10+ day 5-member seeded ensemble rollouts (returning the ensemble mean and spread) and causal perturbation propagation experiments (such as localized Bay of Bengal warming or Arabian Sea wind stalls) in ~320–480 ms on 4 CPU cores.
 
 ---
 
@@ -62,7 +62,7 @@ flowchart TD
 
 ---
 
-## 🚀 Quickstart (Offline Serving)
+## 🚀 Quickstart (Offline Serving & Dashboard)
 
 The inference server is fully self-contained—weights, normalization statistics, and static topographic/land-sea buffers (`land_sea_mask`, `orography_m`) live inside the checkpoint with zero external network calls.
 
@@ -77,6 +77,11 @@ python serve.py --port 8000
 
 # 3. Validate API Contract
 python -m monsoon_r1.schema_validator http://localhost:8000
+
+# 4. Start React Dashboard
+cd dashboard
+pnpm install
+pnpm dev
 ```
 
 ---
@@ -108,11 +113,12 @@ The repository provides the full reproducible training, fine-tuning, and verific
 
 ## 📂 Repository Structure
 
+- `Vaayu_Technical_Brief.pdf` — 2-page project brief detailing architecture, causal formulation, and evaluation metrics
 - `serve.py` — Offline FastAPI inference server (`POST /health`, `POST /simulate`)
 - `model/` — `MonsoonNet` architecture, `ChannelNormalizer`, deterministic `rollout`, and checkpoint utilities
 - `train/` — Time-split data loader, curriculum trainer, localized shock fine-tuner, and evaluation scripts
-- `weights/` — Self-contained model checkpoint (`weights/monsoon.pt`, tracked via Git LFS)
+- `weights/` — Self-contained model checkpoint (`weights/monsoon.pt`, tracked as a plain Git blob)
 - `dashboard/` — Offline React/TypeScript/Three.js visual analytics dashboard
 - `tests/` — Seeded synthetic unit tests, API contract tests, and scanner verification
-- `tools/` — External scenario generator (`make_demo_inputs.py`) and repository hygiene scanner (`scan_repo.py`)
+- `tools/` — External scenario generator (`make_demo_inputs.py`), repository hygiene scanner (`scan_repo.py`), and test split evaluator (`eval_test_split.py`)
 - `docs/` — API contract and integration log (`docs/INTEGRATION.md`)
