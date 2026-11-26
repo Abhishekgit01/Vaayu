@@ -1,0 +1,43 @@
+# Dataset & binary data files (zero-data policy)
+*.nc
+*.zarr
+*.grib
+*.npy
+*.npz
+*.csv
+*.parquet
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.whl
+monsoon_data/
+
+# Environment & secrets
+.env
+.env.*
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python & tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Jupyter / notebook outputs
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# OS & editor files
+.DS_Store
+Thumbs.db
