@@ -444,6 +444,7 @@ export default function App() {
           steps={steps}
           onStepsChange={setSteps}
           onImport={handleImportScenario}
+          health={health}
         />
       ) : (
         <main className="panel-enter flex w-full flex-1 flex-col">

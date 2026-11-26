@@ -2,17 +2,21 @@ import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import type { ScenarioData } from '../api/types'
 import { parseAndValidateScenario } from '../lib/validation'
 import { AsciiRainscapeBg } from './AsciiRainscapeBg'
+import { MonsoonMascot } from './MonsoonMascot'
+import type { HealthState } from './StatusBar'
 
 interface EmptyStateProps {
   steps: number
   onStepsChange: (steps: number) => void
   onImport: (scenario: ScenarioData) => void
+  health: HealthState
 }
 
 export function EmptyState({
   steps,
   onStepsChange,
   onImport,
+  health,
 }: EmptyStateProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [showPasteBox, setShowPasteBox] = useState(false)
@@ -84,6 +88,9 @@ export function EmptyState({
     >
       {/* ASCII cloud & rain canvas (z-index -1, no pointer events, 15 FPS); unmounts the moment import is clicked */}
       <AsciiRainscapeBg destroyed={bgDestroyed} />
+
+      {/* Decorative monsoon mascot scene (right half, above the ASCII bg) */}
+      {!bgDestroyed && <MonsoonMascot health={health} isDragging={isDragging} />}
 
       {/* Soft left-side scrim so the editorial copy stays readable over the rain */}
       <div
