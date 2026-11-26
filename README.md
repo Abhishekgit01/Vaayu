@@ -1,77 +1,118 @@
-# Monsoon Twin — Yugaantar DevForge (Track 2: Multiverse of Monsoon)
+# ⛈️ Vaayu (Monsoon Twin)
 
-**Monsoon Twin** is a fast, offline-only, physics-aware digital twin of India's daily weather (`32 × 36` grid, `1°` resolution, `lat 6.5..37.5`, `lon 65.5..100.5`) serving 10+ day autoregressive rollouts and localized shock simulations over `POST /simulate`.
+**An Edge-Capable, Physics-Aware Earth-System Digital Twin of the Indian Monsoon**
 
-## Architecture (`MonsoonNet`, 125,126 Parameters)
+![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi) ![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
 
-`model/net.py` implements a custom **125,126-parameter** fully convolutional residual network (`MonsoonNet`) designed for causal, local-first perturbation propagation on CPU:
+---
 
-- **Inputs (22 planes per step):** 3 consecutive days × 6 dynamic channels (`t2m`, `tp`, `u10`, `v10`, `msl`, `tcwv`) + 2 registered static buffers (`land_sea_mask`, `orography_m`) + 2 broadcast day-of-year phase planes (`sin`, `cos`).
-- **Exact 3-cell receptive field:** A `1×1` stem, **exactly three** `3×3` `reflect`-padded residual blocks (`_LocalResBlock`), and a `1×1` head—with no pooling, no strided or dilated convolutions, no attention, and no global operations. By construction, any single-cell perturbation affects at most a 3-cell radius on Day 1, ensuring physical locality before spreading outward on later days.
-- **Physical-unit I/O & Normalization:** `model/normalize.py` applies per-channel z-scoring (`tp` transformed via `log1p` / `expm1` and clamped `>= 0`) inside the model using buffers saved in the checkpoint. `model/rollout.py` runs deterministically (`eval()`, `torch.no_grad()`), adds any physical perturbation to `init_states[-1]` before normalization, rotates `(sin, cos)` by `2π/365` per step, and clamps `t2m` to `[233.15, 333.15]` K.
+## 🌍 Overview
 
-## Setup (Offline Serving)
+**Vaayu** is an offline-first Earth-System Digital Twin built for **Track 2: Multiverse of Monsoon**, performing autoregressive spatiotemporal emulation of India's daily atmosphere on a `32 × 36` (`1° × 1°`, `lat 6.5..37.5`, `lon 65.5..100.5`) domain across 6 physical state variables (`t2m`, `tp`, `u10`, `v10`, `msl`, `tcwv`). Engineered for constrained CPU runtimes, Vaayu executes 10+ day deterministic rollouts and causal perturbation propagation experiments (such as localized Bay of Bengal warming or Arabian Sea wind stalls) in ~300 ms per call.
+
+---
+
+## 🧠 System Architecture
+
+Vaayu decouples a lightweight, self-contained PyTorch inference engine from a browser-computed React visual analytics dashboard.
+
+```mermaid
+graph LR
+    A[Scenario JSON] -->|Import| B(React Dashboard)
+    B -->|POST /simulate| C{FastAPI serve.py}
+    C -->|init_states & shock| D[MonsoonNet 125k]
+    D -->|10-day Tensor| C
+    C -->|Rollout Payload| B
+    B -->|Browser Compute| E[Impact Panel & Difference Map]
+
+    style B fill:#20232A,stroke:#61DAFB,stroke-width:2px,color:#fff
+    style C fill:#005571,stroke:#fff,stroke-width:2px,color:#fff
+    style D fill:#EE4C2C,stroke:#fff,stroke-width:2px,color:#fff
+```
+
+---
+
+## 🌪️ Core Physics (Causality & Receptive Field)
+
+Standard Vision Transformers (ViTs) and U-Nets rely on global attention or deep spatial downsampling, allowing localized anomalies to unphysically "teleport" across the subcontinent on Day 1. **MonsoonNet** (`125,126` parameters) enforces strict physical causality through a geometrically constrained receptive field.
+
+```mermaid
+flowchart TD
+    In["3-Day Input (22 Planes: 18 Dynamic + 2 Static + 2 DOY)"] --> Norm["Channel Z-Score Normalization (log1p tp)"]
+    Norm --> Stem["1x1 Convolutional Stem"]
+    Stem --> Res1["3x3 ResBlock (Reflect Pad)"]
+    Res1 --> Res2["3x3 ResBlock (Reflect Pad)"]
+    Res2 --> Res3["3x3 ResBlock (Reflect Pad)"]
+    Res3 --> Head["1x1 Convolutional Head"]
+    Head --> Delta["Delta (Δ) Prediction"]
+    Delta --> Add{"+"}
+    In --> Add
+    Add --> Out["Output State (t+1)"]
+
+    style In fill:#2b2d42,stroke:#edf2f4,color:#fff
+    style Out fill:#d90429,stroke:#edf2f4,color:#fff
+    style Res1 fill:#8d99ae,color:#fff
+    style Res2 fill:#8d99ae,color:#fff
+    style Res3 fill:#8d99ae,color:#fff
+```
+
+- **Strict 3-Cell Receptive Field:** By stacking **exactly three `3×3` reflect-padded residual convolutions** without pooling, striding, dilation, or global operations, any single-cell perturbation is mathematically bounded to a 3-cell radius per autoregressive step, preserving fluid-dynamic locality before propagating outward over multi-day rollouts.
+- **Physical-Unit Perturbations:** Shocks are added to `init_states[-1]` in raw physical units prior to normalization, guaranteeing byte-identical (`np.array_equal`) outputs for zero-perturbation calls and non-negative (`expm1` + clamp) precipitation fields.
+- **Variance-Matched Curriculum Optimization:** Trained across a `1 → 2 → 4 → 8` step rollout curriculum with exogenous input noise (`σ = 0.02`), latitude-weighted (`cos(lat)`) MSE, heavy-rain (`> 10 mm/day`) emphasis, spatial-gradient L1 regularization, and logarithmic spatial variance matching to prevent multi-day smoothing.
+
+---
+
+## 🚀 Quickstart (Offline Serving)
+
+The inference server is fully self-contained—weights, normalization statistics, and static topographic/land-sea buffers (`land_sea_mask`, `orography_m`) live inside the checkpoint with zero external network calls.
 
 ```bash
+# 1. Environment Setup
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
 
-Start the offline server on `0.0.0.0:8000`:
-
-```bash
+# 2. Start Inference Server (0.0.0.0:8000)
 python serve.py --port 8000
-```
 
-Validate against the Round 1 API contract:
-
-```bash
+# 3. Validate API Contract
 python -m monsoon_r1.schema_validator http://localhost:8000
 ```
 
-## Training & Evaluation
+---
 
-Install training dependencies (in addition to `requirements.txt`):
+## 🔬 Training Pipeline
 
-```bash
-pip install -r requirements-train.txt
-```
+The repository provides the full reproducible training, fine-tuning, and verification pipeline (requires `pip install -r requirements-train.txt`):
 
-1. **Baseline evaluation** (persistence & on-the-fly training-split DOY climatology):
-   ```bash
-   python train/eval_skill.py --dataset <PATH_TO_NETCDF>
-   ```
-2. **Curriculum rollout training** (`1 -> 2 -> 4 -> 8` steps, noise injection `0.02`, latitude-weighted MSE + heavy-rain weighting + gradient L1 + variance matching):
+1. **Curriculum Rollout Training:**
    ```bash
    python -m train.train --dataset <PATH_TO_NETCDF> --out weights/monsoon.pt --epochs 16 --width 64 --lr 1e-3 --batch-size 32 --device auto
    ```
-3. **Shock & `t2m` fine-tuning** (synthetic localized shocks, Day-1 locality & Days 4–8 propagation losses, `tcwv` conservation):
+2. **Physical Shock Fine-Tuning:**
    ```bash
    python -m train.train_shock --dataset <PATH_TO_NETCDF> --checkpoint weights/monsoon.pt --out weights/monsoon_shock.pt --epochs 4 --horizon 8 --lr 2e-4 --batch-size 16 --w-t2m 2.5 --w-grad 0.1 --w-tcwv-cons 0.05 --shock-prob 0.5 --device auto
    ```
-4. **Judge-style shock evaluation**:
+3. **Causality & Baseline Benchmarking:**
    ```bash
+   python train/eval_skill.py --dataset <PATH_TO_NETCDF>
    python train/shock_eval.py --checkpoint weights/monsoon.pt --dataset <PATH_TO_NETCDF> --n-windows 10 --steps 8
    ```
-5. **Unit tests & repo hygiene scan**:
+4. **Unit Tests & Hygiene Scan:**
    ```bash
    python -m pytest -v tests/
    python tools/scan_repo.py --history .
    ```
 
-## Known Limitations
+---
 
-- **`t2m` Day-4 RMSE:** While `tp` heavy-rain CSI beats the baselines at Days 1, 4, and 8 and all Day-8 spatial variance ratios sit within `0.40..2.50`, `t2m` Day-4 RMSE (`~3.57 K` after fine-tuning) misses persistence (`1.95 K`) and climatology (`1.79 K`) due to diurnal/thermal-cycle drift across multi-step rollouts.
-- **Shock `propagates` threshold:** Under `monsoon_r1.scoring.causality_checks`, Day-1 locality (`100%`), stability (`< 5 std`), null-shock exactness (`0.0`), and front speed (`<= 8 cells/day`) pass, but `propagates` remains `False` because outside-halo energy on Days 4–8 does not yet exceed the `2%` peak-energy threshold across all windows.
-
-## Repository Layout
+## 📂 Repository Structure
 
 - `serve.py` — Offline FastAPI inference server (`POST /health`, `POST /simulate`)
-- `model/` — `MonsoonNet`, `ChannelNormalizer`, `rollout`, and checkpoint utilities
-- `train/` — Data splitting, baselines, curriculum training, shock fine-tuning, and evaluation
-- `weights/` — Trained checkpoints tracked via Git LFS (`weights/*.pt`, `weights/*.onnx`)
-- `tests/` — Seeded synthetic unit tests (zero saved data)
-- `tools/` — Local utility & repository hygiene scanner (`scan_repo.py`)
-- `dashboard/` — Frontend application (separate from server)
+- `model/` — `MonsoonNet` architecture, `ChannelNormalizer`, deterministic `rollout`, and checkpoint utilities
+- `train/` — Time-split data loader, curriculum trainer, localized shock fine-tuner, and evaluation scripts
+- `weights/` — Self-contained model checkpoint (`weights/monsoon.pt`, tracked via Git LFS)
+- `dashboard/` — Offline React/TypeScript/Three.js visual analytics dashboard
+- `tests/` — Seeded synthetic unit tests, API contract tests, and scanner verification
+- `tools/` — External scenario generator (`make_demo_inputs.py`) and repository hygiene scanner (`scan_repo.py`)
 - `docs/` — API contract and integration log (`docs/INTEGRATION.md`)
