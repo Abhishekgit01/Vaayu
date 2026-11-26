@@ -397,7 +397,7 @@ function MiniStressShiftMap({
   newlyStressed,
   relieved,
   title = 'Stress Shift (Branch − Prime)',
-  emptyMessage = 'Run Branch to map newly stressed vs relieved Kharif cells',
+  emptyMessage = 'Run Branch to map newly stressed vs relieved cells',
   newlyLabel = 'Newly stressed',
   hoveredCell,
   onHoverCell,
@@ -599,8 +599,8 @@ interface MiniWetBulbHeatmapProps {
 }
 
 /**
- * Static north-up 32x36 heatmap for the current timeline step's Lethal Wet-Bulb Index:
- *   Wet_Bulb_Eq = t2m + (tcwv * 0.15)
+ * Static north-up 32x36 heatmap for the current timeline step's Heat-Humidity Stress Index (screening proxy):
+ *   HHSI = t2m + (tcwv * 0.15)
  * Highlights cells exceeding thresholdK (default 310.0 K, approx 37°C) as Severe Human Danger.
  */
 function MiniWetBulbHeatmap({
@@ -1031,7 +1031,7 @@ export function ImpactPanel({
             Agronomic Decision Support System
           </p>
           <h2 className="font-serif-display mt-1 text-3xl leading-none text-[#ECE7DA]">
-            Kharif Crop Dry-Spell Index
+            Dry-Spell Onset Flag
           </h2>
           <p className="mt-1.5 text-xs text-[#8C958D]">
             Consecutive rollout days with rainfall <code className="font-mono text-[#ECE7DA]">tp &lt; {activeSettings.drySpellThresholdMmDay.toFixed(1)} mm/day</code> (channel 1);{' '}
@@ -1254,7 +1254,7 @@ export function ImpactPanel({
         />
       </div>
 
-      {/* Secondary Metric: Lethal Wet-Bulb Index (Current Scrubber Step) */}
+      {/* Secondary Metric: Heat-Humidity Stress Index (screening proxy, Current Scrubber Step) */}
       <div className="mt-12 border-t border-[#26312B] pt-8">
         <div className="flex flex-wrap items-baseline justify-between gap-6">
           <div>
@@ -1263,16 +1263,16 @@ export function ImpactPanel({
               {evaluatedSteps > 0 ? ` / ${evaluatedSteps}` : ''} (scrubber-synced)
             </p>
             <h2 className="font-serif-display mt-1 text-3xl leading-none text-[#ECE7DA]">
-              Lethal Wet-Bulb Index
+              Heat-Humidity Stress Index (screening proxy)
             </h2>
             <p className="mt-1.5 text-xs text-[#8C958D]">
-              Current-step moist-heat equivalent{' '}
-              <code className="font-mono text-[#ECE7DA]">Wet_Bulb_Eq = t2m + (tcwv × 0.15)</code>{' '}
+              Current-step screening proxy{' '}
+              <code className="font-mono text-[#ECE7DA]">HHSI = t2m + (tcwv × 0.15)</code>{' '}
               combining 2m Temperature (<code className="font-mono text-[#ECE7DA]">t2m</code>, index
               0) and Total Column Water Vapor (<code className="font-mono text-[#ECE7DA]">tcwv</code>
               , index 5);{' '}
               <strong className="font-medium text-[#D9593D]">Severe Human Danger</strong> flagged
-              where <code className="font-mono text-[#ECE7DA]">Wet_Bulb_Eq &gt; {wetBulbThresholdK.toFixed(1)} K</code>{' '}
+              where <code className="font-mono text-[#ECE7DA]">HHSI &gt; {wetBulbThresholdK.toFixed(1)} K</code>{' '}
               (≈ {(wetBulbThresholdK - 273.15).toFixed(0)}°C threshold; 1 cell ≈{' '}
               {CELL_AREA_SQ_KM.toLocaleString()} sq km).
             </p>
@@ -1296,7 +1296,7 @@ export function ImpactPanel({
                     })
                   }
                 }}
-                aria-label="Severe Human Danger Wet-Bulb Equivalent threshold in Kelvin"
+                aria-label="Severe Human Danger Heat-Humidity Stress Index threshold in Kelvin"
                 className="tabular-nums w-16 rounded-[2px] border border-[#26312B] bg-[#141B18] px-1.5 py-0.5 text-right font-mono text-xs text-[#ECE7DA] focus:border-[#F0B84B] focus:outline-none"
               />
               <span className="font-mono">K</span>
@@ -1435,12 +1435,12 @@ export function ImpactPanel({
           </div>
         </div>
 
-        {/* Static Current-Step Wet-Bulb Heatmaps */}
+        {/* Static Current-Step Heat-Humidity Stress Index Heatmaps */}
         <div className="mt-7 grid gap-6 lg:grid-cols-3">
           <MiniWetBulbHeatmap
             title="Timeline Prime"
             accentColor="#7FB5B0"
-            subtitle={`Day ${evaluatedSteps > 0 ? activeStepNumber : '—'} · Wet_Bulb_Eq`}
+            subtitle={`Day ${evaluatedSteps > 0 ? activeStepNumber : '—'} · HHSI`}
             summary={wetBulbComparison?.prime ?? null}
             physicalState={primeStepState}
             otherSummary={wetBulbComparison?.branch ?? null}
@@ -1455,7 +1455,7 @@ export function ImpactPanel({
           <MiniWetBulbHeatmap
             title="Timeline Branch"
             accentColor="#F0B84B"
-            subtitle={`Day ${evaluatedSteps > 0 ? activeStepNumber : '—'} · Wet_Bulb_Eq`}
+            subtitle={`Day ${evaluatedSteps > 0 ? activeStepNumber : '—'} · HHSI`}
             summary={wetBulbComparison?.branch ?? null}
             physicalState={branchStepState}
             otherSummary={wetBulbComparison?.prime ?? null}
@@ -1464,7 +1464,7 @@ export function ImpactPanel({
             sharedMaxK={wetBulbSharedRange.max}
             hoveredCell={hoveredWetBulbCell}
             onHoverCell={setHoveredWetBulbCell}
-            emptyMessage="Run a shock or preset to map Branch wet-bulb danger"
+            emptyMessage="Run a shock or preset to map Branch stress index"
           />
 
           <MiniStressShiftMap

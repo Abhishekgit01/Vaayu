@@ -315,3 +315,35 @@ def test_robustness_bad_inputs_and_recovery(server_url: str):
     _assert_valid_rollout(r1, 5)
     assert np.array_equal(r1, r2)
     assert np.array_equal(r1, rz)
+
+
+def test_state_bounds_headroom(server_url: str) -> None:
+    """Extreme-but-valid t2m=355 K and msl=120000 Pa return 200; out-of-bounds return 422."""
+    rng = np.random.default_rng(7)
+    init_states = np.zeros((3, N_CHANNELS, NLAT, NLON), dtype=np.float32)
+    init_states[:, 0] = 300.0 + rng.normal(0.0, 2.0, (3, NLAT, NLON))
+    init_states[:, 1] = np.clip(rng.gamma(1.5, 4.0, (3, NLAT, NLON)), 0.0, 200.0)
+    init_states[:, 2] = rng.normal(2.0, 3.0, (3, NLAT, NLON))
+    init_states[:, 3] = rng.normal(1.0, 3.0, (3, NLAT, NLON))
+    init_states[:, 4] = 100800.0 + rng.normal(0.0, 200.0, (3, NLAT, NLON))
+    init_states[:, 5] = 45.0 + rng.normal(0.0, 5.0, (3, NLAT, NLON))
+    doy_sc = [0.0, -1.0]
+
+    # Extreme-but-valid values within widened STATE_BOUNDS
+    valid_ext = init_states.copy()
+    valid_ext[0, 0, 0, 0] = 355.0
+    valid_ext[0, 4, 0, 0] = 120000.0
+    status_ok, body_ok = _post_json(
+        f"{server_url}/simulate",
+        {"init_states": valid_ext.tolist(), "doy_sincos": doy_sc, "steps": 2, "perturbation": None},
+    )
+    assert status_ok == 200
+    _assert_valid_rollout(np.asarray(body_ok["rollout"], dtype=np.float32), 2)
+
+    # Out-of-bounds msl = 50000 Pa -> 422
+    bad_msl = init_states.copy()
+    bad_msl[0, 4, 0, 0] = 50000.0
+    assert _post_raw(
+        f"{server_url}/simulate",
+        json.dumps({"init_states": bad_msl.tolist(), "doy_sincos": doy_sc, "steps": 2, "perturbation": None}).encode("utf-8"),
+    ) == 422

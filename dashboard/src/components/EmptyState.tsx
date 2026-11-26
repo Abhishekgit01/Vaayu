@@ -7,16 +7,12 @@ interface EmptyStateProps {
   steps: number
   onStepsChange: (steps: number) => void
   onImport: (scenario: ScenarioData) => void
-  showDevPreview?: boolean
-  onLoadSyntheticPreview?: () => void
 }
 
 export function EmptyState({
   steps,
   onStepsChange,
   onImport,
-  showDevPreview = false,
-  onLoadSyntheticPreview,
 }: EmptyStateProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [showPasteBox, setShowPasteBox] = useState(false)
@@ -155,19 +151,6 @@ export function EmptyState({
               />
               <span className="font-mono">days</span>
             </label>
-
-            {showDevPreview && onLoadSyntheticPreview && (
-              <button
-                type="button"
-                onClick={() => {
-                  setBgDestroyed(true)
-                  onLoadSyntheticPreview()
-                }}
-                className="ui-transition rounded-[2px] border border-[#D9593D] bg-[#141B18] px-2.5 py-1 font-mono text-xs text-[#D9593D] hover:bg-[#D9593D] hover:text-[#0D1210] cursor-pointer"
-              >
-                Load synthetic preview
-              </button>
-            )}
           </div>
 
           {/* Expandable mono JSON paste area */}

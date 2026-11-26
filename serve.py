@@ -32,11 +32,11 @@ MAX_STEPS = 365
 # Per-channel physical bounds on init_states: (min, max) derived from training range + wide margin
 # Channels: 0=t2m (K), 1=tp (mm/d), 2=u10 (m/s), 3=v10 (m/s), 4=msl (Pa), 5=tcwv (kg/m2)
 STATE_BOUNDS = (
-    (180.0, 350.0),
+    (180.0, 360.0),
     (-1e-3, 2000.0),
     (-150.0, 150.0),
     (-150.0, 150.0),
-    (75000.0, 115000.0),
+    (70000.0, 125000.0),
     (-1e-3, 250.0),
 )
 # Per-channel max |perturbation| delta in physical units

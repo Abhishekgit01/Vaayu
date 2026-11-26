@@ -33,7 +33,7 @@ export function StatusBar({
   onImportGeographyFile,
   onClearGeography,
   isSimulating,
-  onRefreshHealth,
+  onRefreshHealth: _onRefreshHealth,
   onResetScenario,
 }: StatusBarProps) {
   const geoInputRef = useRef<HTMLInputElement | null>(null)
@@ -53,31 +53,20 @@ export function StatusBar({
     }
   }
 
-  const dotColor =
-    health.kind === 'ready'
-      ? '#8DB580'
-      : health.kind === 'checking'
-        ? '#F0B84B'
-        : '#D9593D'
-
-  const statusWord =
-    health.kind === 'ready'
-      ? 'ready'
-      : health.kind === 'checking'
-        ? 'checking'
-        : 'offline'
+  const pillClass =
+    'inline-flex items-center rounded-full border border-white/15 bg-white/[0.06] backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
 
   return (
-    <header className="sticky top-0 z-30 h-14 border-b border-[#26312B] bg-[#0D1210] px-6">
+    <header className="sticky top-0 z-30 h-16 border-b border-white/10 bg-[#0D1210]/85 backdrop-blur-md px-6">
       <div className="mx-auto flex h-full max-w-[1680px] items-center justify-between gap-4">
         {/* Wordmark left */}
-        <div className="flex min-w-0 items-baseline gap-4">
+        <div className="flex min-w-0 items-center gap-3">
           <h1 className="font-serif-display text-2xl leading-none tracking-tight text-[#ECE7DA]">
             Monsoon Twin
           </h1>
           {hasScenario && (
-            <div className="hidden items-baseline gap-2.5 text-xs text-[#8C958D] sm:flex">
-              <span className="text-[#26312B]">/</span>
+            <div className="hidden items-center gap-2.5 text-xs text-white/60 sm:flex">
+              <span className="text-white/25">/</span>
               <span className="max-w-[180px] truncate font-mono text-[#ECE7DA]">
                 {scenarioLabel ?? 'Loaded scenario'}
               </span>
@@ -85,7 +74,7 @@ export function StatusBar({
                 type="button"
                 onClick={onResetScenario}
                 disabled={isSimulating}
-                className="ui-transition text-[#7FB5B0] underline-offset-4 hover:underline disabled:opacity-40 cursor-pointer"
+                className={`ui-transition ${pillClass} px-3.5 py-1 text-[13px] text-[#7FB5B0] hover:border-white/30 hover:bg-white/[0.11] disabled:opacity-40 cursor-pointer`}
               >
                 Change
               </button>
@@ -93,8 +82,8 @@ export function StatusBar({
           )}
         </div>
 
-        {/* Plain-text telemetry right */}
-        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-xs text-[#8C958D] tabular-nums">
+        {/* Big glassy rounded pill controls & telemetry right */}
+        <div className="flex flex-wrap items-center gap-2.5 font-mono text-[13px] text-white/75 tabular-nums">
           {onImportGeographyFile && (
             <>
               <input
@@ -105,8 +94,8 @@ export function StatusBar({
                 className="hidden"
               />
               {geographyLabel ? (
-                <span className="inline-flex items-center gap-1.5 font-sans text-xs">
-                  <span className="text-[#8C958D]">Mask:</span>
+                <span className={`${pillClass} gap-2 px-4 py-1.5 font-sans text-[13px]`}>
+                  <span className="text-white/60">Mask:</span>
                   <span className="max-w-[110px] truncate font-mono text-[#ECE7DA]">
                     {geographyLabel}
                   </span>
@@ -114,7 +103,7 @@ export function StatusBar({
                     <button
                       type="button"
                       onClick={onClearGeography}
-                      className="ui-transition text-[#7FB5B0] underline-offset-4 hover:underline cursor-pointer"
+                      className="ui-transition rounded-full border border-white/15 bg-white/[0.08] px-2.5 py-0.5 text-xs text-[#7FB5B0] hover:border-white/30 hover:bg-white/[0.14] cursor-pointer"
                     >
                       Clear
                     </button>
@@ -124,41 +113,25 @@ export function StatusBar({
                 <button
                   type="button"
                   onClick={() => geoInputRef.current?.click()}
-                  className="ui-transition font-sans text-xs text-[#7FB5B0] underline-offset-4 hover:underline cursor-pointer"
+                  className={`ui-transition ${pillClass} px-4 py-1.5 font-sans text-[13px] text-white/90 hover:border-white/30 hover:bg-white/[0.11] cursor-pointer`}
                 >
                   Import geography
                 </button>
               )}
-              <span className="text-[#5A645D]">·</span>
             </>
           )}
 
-          <button
-            type="button"
-            onClick={onRefreshHealth}
-            title="Poll POST /health"
-            className="ui-transition inline-flex items-center gap-1.5 hover:text-[#ECE7DA] cursor-pointer"
-          >
-            <span className="font-sans text-[#8C958D]">Server</span>
-            <span
-              aria-hidden="true"
-              className="inline-block h-1.5 w-1.5 rounded-full"
-              style={{ backgroundColor: dotColor }}
-            />
-            <span className={health.kind === 'error' ? 'text-[#D9593D]' : 'text-[#ECE7DA]'}>
-              {statusWord}
+          {health.kind === 'ready' ? (
+            <span className={`${pillClass} px-4 py-1.5 text-[#ECE7DA]`}>
+              <span className="max-w-[180px] truncate">{health.modelName}</span>
             </span>
-          </button>
+          ) : health.kind === 'error' ? (
+            <span className="inline-flex items-center rounded-full border border-[#D9593D]/45 bg-[#D9593D]/10 px-4 py-1.5 text-[#D9593D] backdrop-blur-md">
+              offline
+            </span>
+          ) : null}
 
-          {health.kind === 'ready' && (
-            <>
-              <span className="text-[#5A645D]">·</span>
-              <span className="max-w-[180px] truncate text-[#8C958D]">{health.modelName}</span>
-            </>
-          )}
-
-          <span className="text-[#5A645D]">·</span>
-          <span className="text-[#ECE7DA]">
+          <span className={`${pillClass} px-4 py-1.5 text-[#ECE7DA]`}>
             {isSimulating
               ? 'simulating…'
               : inferenceMs !== null
@@ -166,9 +139,11 @@ export function StatusBar({
                 : '— ms'}
           </span>
 
-          <span className="text-[#5A645D]">·</span>
-          <label htmlFor="status-steps-input" className="inline-flex items-center gap-1">
-            <span>
+          <label
+            htmlFor="status-steps-input"
+            className={`${pillClass} gap-2 py-1 pr-1.5 pl-4`}
+          >
+            <span className="text-white/75">
               step {hasScenario && currentStep ? `${currentStep}/` : ''}
             </span>
             <input
@@ -180,7 +155,7 @@ export function StatusBar({
               disabled={isSimulating}
               onChange={(e) => handleStepInput(e.target.value)}
               aria-label="Forecast rollout steps"
-              className="ui-transition w-10 rounded-[2px] border border-[#26312B] bg-[#141B18] px-1 py-0.5 text-center font-mono text-xs text-[#ECE7DA] focus:border-[#7FB5B0] focus:outline-none disabled:opacity-40"
+              className="ui-transition w-11 rounded-full border border-white/15 bg-black/30 px-2 py-0.5 text-center font-mono text-[13px] text-[#ECE7DA] focus:border-white/40 focus:outline-none disabled:opacity-40"
             />
           </label>
 
@@ -189,7 +164,7 @@ export function StatusBar({
               type="button"
               onClick={onResetScenario}
               disabled={isSimulating}
-              className="ui-transition ml-1 text-xs font-sans text-[#7FB5B0] underline-offset-4 hover:underline sm:hidden cursor-pointer"
+              className={`ui-transition ${pillClass} px-3.5 py-1.5 text-[13px] font-sans text-[#7FB5B0] hover:border-white/30 hover:bg-white/[0.11] sm:hidden cursor-pointer`}
             >
               Change
             </button>

@@ -20,11 +20,6 @@ import { ShockPanel } from './components/ShockPanel'
 import { SpreadChart } from './components/SpreadChart'
 import { StatusBar, type HealthState } from './components/StatusBar'
 import {
-  generateSyntheticRollout,
-  generateSyntheticScenario,
-  isDevPreviewEnabled,
-} from './dev/syntheticScenario'
-import {
   parseAndValidateGeographyJson,
   type GeographyOverlayData,
 } from './lib/geography'
@@ -52,8 +47,6 @@ export default function App() {
   const [simulatingLabel, setSimulatingLabel] = useState('Running simulation…')
 
   // In-memory scenario & rollout state (never persisted to localStorage)
-  const devPreviewEnabled = useMemo(() => isDevPreviewEnabled(), [])
-  const [isSyntheticActive, setIsSyntheticActive] = useState<boolean>(false)
   const [scenario, setScenario] = useState<ScenarioData | null>(null)
   const [steps, setSteps] = useState<number>(10)
   const [primeRollout, setPrimeRollout] = useState<StateSequence | null>(null)
@@ -217,7 +210,6 @@ export default function App() {
 
   const handleImportScenario = useCallback(
     (imported: ScenarioData) => {
-      setIsSyntheticActive(false)
       setScenario(imported)
       setPrimeRollout(null)
       setPrimeSteps(null)
@@ -238,7 +230,6 @@ export default function App() {
     simAbortRef.current?.abort()
     setIsSimulating(false)
     setIsPlaying(false)
-    setIsSyntheticActive(false)
     setScenario(null)
     setPrimeRollout(null)
     setPrimeSteps(null)
@@ -250,41 +241,9 @@ export default function App() {
     setStepIndex(0)
   }, [])
 
-  const handleLoadSyntheticPreview = useCallback(() => {
-    simAbortRef.current?.abort()
-    setIsSimulating(false)
-    setIsPlaying(false)
-    setSimulateError(null)
-    const synthetic = generateSyntheticScenario()
-    const prime = generateSyntheticRollout(synthetic.init_states, steps, null)
-    setIsSyntheticActive(true)
-    setScenario(synthetic)
-    setPrimeRollout(prime)
-    setPrimeSteps(steps)
-    setBranchRollout(null)
-    setAppliedShockMask(getShockMask(null))
-    setBranchLabel('No branch simulated yet')
-    setHasTouchedShock(false)
-    setCompareMode('prime')
-    setStepIndex(0)
-  }, [steps])
-
   const executeShockRun = useCallback(
     async (perturbation: State3D, label: string, configSnapshot: ShockConfig) => {
       if (!scenario) return
-      if (isSyntheticActive) {
-        setSimulateError(null)
-        setIsPlaying(false)
-        const needPrime = !primeRollout || primeSteps !== steps
-        if (needPrime) {
-          setPrimeRollout(generateSyntheticRollout(scenario.init_states, steps, null))
-          setPrimeSteps(steps)
-        }
-        setBranchRollout(generateSyntheticRollout(scenario.init_states, steps, perturbation))
-        setAppliedShockMask(getShockMask(perturbation, configSnapshot))
-        setBranchLabel(label)
-        return
-      }
       simAbortRef.current?.abort()
       const controller = new AbortController()
       simAbortRef.current = controller
@@ -334,7 +293,7 @@ export default function App() {
         }
       }
     },
-    [scenario, isSyntheticActive, primeRollout, primeSteps, steps],
+    [scenario],
   )
 
   const handleRunShock = useCallback(() => {
@@ -480,24 +439,11 @@ export default function App() {
         </div>
       )}
 
-      {isSyntheticActive && (
-        <div
-          role="status"
-          className="w-full border-b border-[#26312B] bg-[#D9593D] px-6 py-1.5 font-mono text-xs font-medium text-[#0D1210]"
-        >
-          <div className="mx-auto flex max-w-[1680px] items-center gap-2">
-            SYNTHETIC - DEV ONLY
-          </div>
-        </div>
-      )}
-
       {!scenario ? (
         <EmptyState
           steps={steps}
           onStepsChange={setSteps}
           onImport={handleImportScenario}
-          showDevPreview={devPreviewEnabled}
-          onLoadSyntheticPreview={handleLoadSyntheticPreview}
         />
       ) : (
         <main className="panel-enter flex w-full flex-1 flex-col">
