@@ -100,8 +100,8 @@ The repository provides the full reproducible training, fine-tuning, and verific
    ```
 3. **Causality & Baseline Benchmarking:**
    ```bash
-   python train/eval_skill.py --dataset <PATH_TO_NETCDF>
-   python train/shock_eval.py --checkpoint weights/monsoon.pt --dataset <PATH_TO_NETCDF> --n-windows 10 --steps 8
+   python -m train.eval_skill --dataset <PATH_TO_NETCDF>
+   python -m train.shock_eval --checkpoint weights/monsoon.pt --dataset <PATH_TO_NETCDF> --n-windows 10 --steps 8
    ```
 4. **Unit Tests & Hygiene Scan:**
    ```bash
